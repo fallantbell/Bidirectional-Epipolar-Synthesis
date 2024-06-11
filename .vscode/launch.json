@@ -1,0 +1,71 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/data/realestate/re10k_dataset.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "train",
+            "type": "debugpy",
+            "module": "torch.distributed.run",
+            "request": "launch",
+            "args": [
+                "--nproc_per_node","2",
+                "main.py",
+                "--dataset","realestate",
+                "--name","exp_debug",
+                "--base","./configs/realestate/realestate_16x16_sine_cview_adaptive.yaml",
+                "--gpu","5,6",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "train_onegpu",
+            "type": "debugpy",
+            "request": "launch",
+            "program":"main.py",
+            "args": [
+                "--dataset","realestate",
+                "--name","exp_debug",
+                "--base","./configs/realestate/realestate_16x16_sine_cview_adaptive.yaml",
+                "--gpu","5",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "evaluate",
+            "type": "debugpy",
+            "request": "launch",
+            "program":"./evaluation/evaluate_realestate.py",
+            "args": [
+                "--len","21",
+                "--video_limit","10",
+                "--base","realestate_16x16_sine_cview_adaptive_epipolar",
+                "--exp","exp_forward_epipolar_error",
+                "--gpu","5",
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "evaluate_base",
+            "type": "debugpy",
+            "request": "launch",
+            "program":"./evaluation/evaluate_realestate.py",
+            "args": [
+                "--len","21",
+                "--video_limit","10",
+                "--base","realestate_16x16_sine_cview_adaptive",
+                "--exp","exp_base_error",
+                "--gpu","4",
+            ],
+            "console": "integratedTerminal"
+        },
+    ]
+}
