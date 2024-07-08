@@ -40,6 +40,7 @@ parser.add_argument("--video_limit", type=int, default=20, help="# of video to t
 parser.add_argument("--gap", type=int, default=10, help="")
 parser.add_argument("--seed", type=int, default=2333, help="")
 parser.add_argument("--GT_start", action='store_true')
+parser.add_argument("--cross", action='store_true')
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -111,7 +112,7 @@ from src.data.realestate.re10k_dataset import Re10k_dataset
 sparse_dir = "%s/sparse/" % args.data_path
 image_dir = "%s/dataset/" % args.data_path
 # dataset_abs = VideoDataset(sparse_dir = sparse_dir, image_dir = image_dir, length = args.len, low = args.gap, high = args.gap, split = "test")
-dataset_abs = Re10k_dataset(data_root="../dataset",mode="test",infer_len=args.len)
+dataset_abs = Re10k_dataset(data_root="../../../disk2/icchiu",mode="test",infer_len=args.len)
 
 test_loader_abs = torch.utils.data.DataLoader(
         dataset_abs,
@@ -166,14 +167,21 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
 
         prototype = torch.cat(conditions, 1) #* (1,286,1024) rgb1+camera 的embed
         z_start_indices = c_indices[:, :0]
-        index_sample = temp_model.sample_latent(z_start_indices, prototype, [p1, None, None],
-                                       steps=c_indices.shape[1],
-                                       k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,0:3,...],
-                                       temperature=1.0,
-                                       sample=False,
-                                       top_k=100,
-                                       callback=lambda k: None,
-                                       embeddings=None)
+
+        if args.cross==False:
+            index_sample = temp_model.sample_latent(z_start_indices, prototype, [p1, None, None],
+                                        steps=c_indices.shape[1],
+                                        k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,0:3,...],
+                                        temperature=1.0,
+                                        sample=False,
+                                        top_k=100,
+                                        callback=lambda k: None,
+                                        embeddings=None)
+
+        if args.cross:
+            index_sample = temp_model.sample_cross(prototype[:, -286:, :],prototype[:, :0, :],
+                                                k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,0:2,...],
+                                                top_k=100,)
 
         sample_dec = temp_model.decode_to_img(index_sample, [1, 256, 16, 16])
         video_clips.append(sample_dec) # update video_clips list
@@ -252,7 +260,9 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 prototype = torch.cat(conditions, 1)
 
                 z_start_indices = c_indices[:, :0]
-                index_sample = temp_model.sample_latent(z_start_indices, prototype, [p1, p2, p3],
+
+                if args.cross==False:
+                    index_sample = temp_model.sample_latent(z_start_indices, prototype, [p1, p2, p3],
                                                steps=c_indices.shape[1],
                                                k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+3,...],
                                                temperature=1.0,
@@ -260,7 +270,12 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                                                top_k=100,
                                                callback=lambda k: None,
                                                embeddings=None)
+                if args.cross:
+                    index_sample = temp_model.sample_cross(prototype[:, -286:, :],prototype[:, :0, :],
+                                                       k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,i+1:i+3,...],
+                                                       top_k=100,)
 
+                print(f"sample shape = {index_sample.shape}")
                 sample_dec = temp_model.decode_to_img(index_sample, [1, 256, 16, 16])
                 current_im = as_png(sample_dec.permute(0,2,3,1)[0])
                 video_clips.append(sample_dec) # update video_clips list

@@ -29,6 +29,7 @@ model:
         n_embd: 1024
         epipolar: "bidirectional" #* forward, bidirectional, alternately
         do_cross: True
+        sep_pe: False  #* condition 跟 target 是否分開坐 position encode
 
     first_stage_key:
       x: "dst_img"
