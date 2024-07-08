@@ -375,6 +375,21 @@ class GeoTransformer(nn.Module):
         return x
     
     @torch.no_grad()
+    def sample_cross(self, prototype, z_emb,k_ori=None,w2c=None,temperature=1.0, sample=False, top_k=None,
+               callback=lambda k: None, embeddings=None, **kwargs):
+        assert not self.transformer.training
+
+        logits, _ = self.transformer.cross_forward(prototype, z_emb[:,:0],k=k_ori.clone(),w2c=w2c)
+
+        if top_k is not None:
+            logits = self.top_k_logits(logits, top_k)
+        probs = F.softmax(logits, dim=-1)
+
+        _, sample = torch.topk(probs, k=1, dim=-1)
+
+        return sample[:,:256]
+
+    @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,
                callback=lambda k: None, embeddings=None, **kwargs):
         # in the current variant we always use embeddings for camera

@@ -302,7 +302,7 @@ class GPT(nn.Module):
     """  the full GPT language model, with a context size of block_size """
     def __init__(self, vocab_size, block_size, time_len, n_layer=12, n_head=8, n_embd=256,
                  embd_pdrop=0., resid_pdrop=0., attn_pdrop=0., n_unmasked=0,
-                 input_vocab_size=None,epipolar=None,do_cross=False):
+                 input_vocab_size=None,epipolar=None,do_cross=False,sep_pe = False):
         super().__init__()
         config = GPTConfig(vocab_size=vocab_size, block_size=block_size,
                            embd_pdrop=embd_pdrop, resid_pdrop=resid_pdrop, attn_pdrop=attn_pdrop,
@@ -326,6 +326,13 @@ class GPT(nn.Module):
         
         self.time_emb = nn.Parameter(data=get_sinusoid_encoding(n_position=block_size, d_hid=config.n_embd), requires_grad=False)
         
+        #* 試試讓condition 跟 target 用不同的 position encode
+        self.sep_pe = sep_pe
+        if sep_pe == True:
+            self.frame_emb2 = nn.Parameter(torch.zeros(1, 256, config.n_embd))
+            self.camera_emb2 = nn.Parameter(torch.zeros(1, 30, config.n_embd))
+            self.time_emb2 = nn.Parameter(data=get_sinusoid_encoding(n_position=block_size, d_hid=config.n_embd), requires_grad=False)
+
         # dropout
         self.drop = nn.Dropout(config.embd_pdrop)
         # transformer 
@@ -359,7 +366,12 @@ class GPT(nn.Module):
                         self.blocks.append(Block(config, adaptive = False,epipolar=None))
         
         elif do_cross == True:
-            for _ in range(int(config.n_layer // 2)):
+            '''
+                recon:          前 forward 後 backward
+                just forward:   前 forward 後 forward
+                預設cross:      前 bidirectional 後 bidirectional
+            '''
+            for _ in range(int(config.n_layer // 2)-3):
                 #* cross attn 跟 self attn 交替
                 self.blocks.append(Block_cross(config,epipolar="forward"))
                 self.blocks.append(Block_cross(config,epipolar=None))
@@ -367,7 +379,7 @@ class GPT(nn.Module):
             self.blocks2 = nn.ModuleList()
             for _ in range(3):
                 #* cross attn 跟 self attn 交替
-                self.blocks2.append(Block_cross(config,epipolar="backward"))
+                self.blocks2.append(Block_cross(config,epipolar="forward"))
                 self.blocks2.append(Block_cross(config,epipolar=None))
 
         # decoder head
@@ -641,7 +653,20 @@ class GPT(nn.Module):
         x = start_token + role_embeddings + time_embeddings
 
         #! test position emb for src img
-        token_embeddings = token_embeddings + role_embeddings + time_embeddings
+        if self.sep_pe==False:
+            token_embeddings = token_embeddings + role_embeddings + time_embeddings
+        else: #* 分開做position encode
+            role_emb2 = []
+            for _ in range(1):
+                role_emb2.append(self.frame_emb2)
+                role_emb2.append(self.camera_emb2)
+
+            # role_emb.append(self.frame_emb)
+            role_emb2 = torch.cat(role_emb2, 1)
+            role_embeddings2 = role_emb2[:, :t, :] # each position maps to a (learnable) vector
+            time_embeddings2 = self.time_emb2[:, :t, :] # each position maps to a (learnable) vector
+
+            token_embeddings = token_embeddings + role_embeddings2 + time_embeddings2
 
         # print(f"input shape = {x.shape}")
 
