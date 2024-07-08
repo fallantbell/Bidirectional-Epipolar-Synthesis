@@ -197,7 +197,7 @@ if __name__ == '__main__':
 
         if idx % args.visual_iter == 0:
             if get_rank() == 0:
-                gt_clip = batch["rgbs"][0].permute(1,0,2,3)
+                gt_clip = batch["rgbs"][0][:,:time_len].permute(1,0,2,3)
                 gt_clip = vutils.make_grid(gt_clip)
                 gt_clip = (gt_clip + 1)/2
 

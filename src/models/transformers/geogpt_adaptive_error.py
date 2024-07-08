@@ -239,6 +239,67 @@ class GeoTransformer(nn.Module):
         loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
         return forecasts, gts, loss, log_dict
 
+    def cross_forward(self, batch):
+        # get time
+        B, time_len = batch["rgbs"].shape[0], batch["rgbs"].shape[2]        
+        # set train pair
+        gts = []
+        forecasts = []
+        
+        # set seq
+        video_clips = []
+        video_clips.append(batch["rgbs"][:, :, 0, ...])
+        
+        # get gts
+        gt_clips = []
+        for t in range(1, time_len):
+            _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...])            
+            gt_clips.append(c_indices) # for loss
+        
+        for i in range(0,time_len-1):
+            conditions = []
+            p = []
+
+            R_src = batch["R_s"][:, i, ...]
+            t_src = batch["t_s"][:, i, ...]
+
+            # create dict
+            example = dict()
+            example["K"] = batch["K"]
+            example["K_inv"] = batch["K_inv"]
+
+            # accumulate frame 0
+            _, c_indices = self.encode_to_c(video_clips[-1])
+            c_emb = self.transformer.tok_emb(c_indices)
+            conditions.append(c_emb)
+
+            # accumulate camera
+            R_rel, t_rel = self.compute_camera_pose(batch["R_s"][:, i+1, ...], batch["t_s"][:, i+1, ...], R_src, t_src)
+            example["R_rel"] = R_rel
+            example["t_rel"] = t_rel
+            embeddings_warp = self.encode_to_e(example)
+            conditions.append(embeddings_warp)
+
+            # get logits
+            conditions = torch.cat(conditions, 1) # B, L, 1024
+            prototype = conditions[:, 0:286, :]
+            z_emb = conditions[:, 286::, :]
+
+            logits, _ = self.transformer.cross_forward(prototype, z_emb,k=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+3,...])
+
+
+            for t in range(0, 1):
+                # get prediction
+                temp_logits = logits[:, 286*t:286*t+256, :]
+                forecasts.append(temp_logits)
+                predict = torch.argmax(temp_logits, 2)
+                predict = self.decode_to_img(predict, [-1, 256, 16,16])
+                video_clips.append(predict)
+                # get gts
+                gts.append(gt_clips[i+t])
+
+        loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
+        return forecasts, gts, loss, log_dict
 
     def top_k_logits(self, logits, k):
         v, ix = torch.topk(logits, k)

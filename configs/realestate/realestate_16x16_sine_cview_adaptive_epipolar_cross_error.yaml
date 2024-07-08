@@ -1,17 +1,18 @@
 model:
   base_learning_rate: 0.0625
-  target: src.models.transformers.geogpt_adaptive.GeoTransformer
-  params:
-    use_depth: False # depth is not provided to transformer but only used to rescale t
-    epipolar: "bidirectional" #* forward, bidirectional, alternately
+  do_cross: True
+  target: src.models.transformers.geogpt_adaptive_error.GeoTransformer
+  params: 
+    ckpt_path: "experiments/realestate/exp_bidirectional_cross/model/last.ckpt"  #* forward, bidirectional, alternately
+    use_depth: False # depth is not provided to transformer
 
     use_scheduler: True
     scheduler_config:
       target: src.lr_scheduler.LambdaWarmUpCosineScheduler
       params:
         verbosity_interval: 0   # 0 or negative to disable
-        warm_up_steps: 10000
-        max_decay_steps: 400001
+        warm_up_steps: 0
+        max_decay_steps: 100001
         lr_start: 2.5e-6
         lr_max: 1.5e-4
         lr_min: 1.0e-8
@@ -21,12 +22,13 @@ model:
       params:
         time_len: 3
         vocab_size: 16384
-        block_size: 827 # conditioning + 299 - 1
+        block_size: 286 # conditioning + 299 - 1
         n_unmasked: 286 # 30 camera embeddings + 299 merged cond and depth embeddings
         n_layer: 32
         n_head: 16
         n_embd: 1024
-        epipolar: "bidirectional" #* forward, bidirectional, alternately
+        epipolar: "bidirectional"  #* forward, bidirectional, alternately
+        do_cross: True
 
     first_stage_key:
       x: "dst_img"
@@ -78,5 +80,5 @@ model:
 
 lightning:
   trainer:
-    accumulate_grad_batches: 4
+    accumulate_grad_batches: 2
     benchmark: True

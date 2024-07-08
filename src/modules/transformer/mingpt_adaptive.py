@@ -87,6 +87,58 @@ class AdaptiveAttention(nn.Module):
             h[:, :, 571:827, 286:542] = h_12 #* query為rgb2 要跟 key rgb1 找關係
 
         return h
+    
+class cross_Attention(nn.Module):
+    def __init__(self, config,epipolar = None):
+        super().__init__()
+        self.key = nn.Linear(config.n_embd, config.n_embd)
+        self.query = nn.Linear(config.n_embd, config.n_embd)
+        self.value = nn.Linear(config.n_embd, config.n_embd)
+
+        self.attn_drop = nn.Dropout(config.attn_pdrop)
+        self.resid_drop = nn.Dropout(config.resid_pdrop)
+
+        self.proj = nn.Linear(config.n_embd, config.n_embd)
+
+        self.n_head = config.n_head
+        self.epipolar = epipolar
+    
+    def forward(self, x, src_encode,forward_map = None,backward_map = None):
+        
+        B, T, C = x.size()
+        
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        k = self.key(src_encode).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = self.value(src_encode).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        if self.epipolar == "forward":
+            f01 = forward_map[0]
+            f01 = repeat(f01,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
+            att[:,:,0:256,0:256] = att[:,:,0:256,0:256]*f01
+        elif self.epipolar == "backward":
+            b01 = backward_map[0]
+            b01 = b01.permute(0,2,1)
+            b01 = repeat(b01,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
+            att[:,:,0:256,0:256] = att[:,:,0:256,0:256]*b01
+        elif self.epipolar == "bidirectional":
+            f01 = forward_map[0]
+            f01 = repeat(f01,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
+            b01 = backward_map[0]
+            b01 = b01.permute(0,2,1)
+            b01 = repeat(b01,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
+            att[:,:,0:256,0:256] = att[:,:,0:256,0:256]*b01*f01
+        
+        att = F.softmax(att, dim=-1)
+        att = self.attn_drop(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_drop(self.proj(y))
+        return y
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, adaptive,epipolar = None):
@@ -225,13 +277,32 @@ class Block(nn.Module):
         x = x + self.attn(self.ln1(x), p,forward_map = forward_map,backward_map = backward_map)
         x = x + self.mlp(self.ln2(x))
         return x
+    
+class Block_cross(nn.Module):
+    """ an unassuming Transformer block """
+    def __init__(self, config,epipolar=None):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(config.n_embd)
+        self.ln2 = nn.LayerNorm(config.n_embd)
+        self.attn = cross_Attention(config,epipolar)
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),  # nice
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.resid_pdrop),
+        )
+
+    def forward(self, x, src_encode,forward_map=None,backward_map=None):
+        x = x + self.attn(self.ln1(x), self.ln1(src_encode),forward_map = forward_map,backward_map = backward_map)
+        x = x + self.mlp(self.ln2(x))
+        return x
 
 
 class GPT(nn.Module):
     """  the full GPT language model, with a context size of block_size """
     def __init__(self, vocab_size, block_size, time_len, n_layer=12, n_head=8, n_embd=256,
                  embd_pdrop=0., resid_pdrop=0., attn_pdrop=0., n_unmasked=0,
-                 input_vocab_size=None,epipolar=None):
+                 input_vocab_size=None,epipolar=None,do_cross=False):
         super().__init__()
         config = GPTConfig(vocab_size=vocab_size, block_size=block_size,
                            embd_pdrop=embd_pdrop, resid_pdrop=resid_pdrop, attn_pdrop=attn_pdrop,
@@ -249,6 +320,9 @@ class GPT(nn.Module):
         self.frame_emb = nn.Parameter(torch.zeros(1, 256, config.n_embd))
         self.camera_emb = nn.Parameter(torch.zeros(1, 30, config.n_embd))
         self.role_emb = None
+
+        if do_cross == True:
+            self.start_token = nn.Parameter(torch.zeros(1, 286, config.n_embd))
         
         self.time_emb = nn.Parameter(data=get_sinusoid_encoding(n_position=block_size, d_hid=config.n_embd), requires_grad=False)
         
@@ -261,24 +335,40 @@ class GPT(nn.Module):
         if self.epipolar == "":
             self.epipolar = None
 
-        if self.epipolar == None:
-            #* 做原本的locality
-            for _ in range(int(config.n_layer // 2)):
-                self.blocks.append(Block(config, adaptive = True))
-                self.blocks.append(Block(config, adaptive = False))
-        else:
-            #! 不做locality 改作epipolar
-            if epipolar == "alternately":
-                for i in range(int(config.n_layer // 2)):
-                    if i%2==0:
-                        self.blocks.append(Block(config, adaptive = False,epipolar="forward"))
-                    else:
-                        self.blocks.append(Block(config, adaptive = False,epipolar="backward"))
-                    self.blocks.append(Block(config, adaptive = False,epipolar=None))
-            else:
+        self.do_cross = do_cross
+        
+        if do_cross==False:
+
+            if self.epipolar == None:
+                #* 做原本的locality
                 for _ in range(int(config.n_layer // 2)):
-                    self.blocks.append(Block(config, adaptive = False,epipolar=epipolar))
-                    self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                    self.blocks.append(Block(config, adaptive = True))
+                    self.blocks.append(Block(config, adaptive = False))
+            else:
+                #! 不做locality 改作epipolar
+                if epipolar == "alternately":
+                    for i in range(int(config.n_layer // 2)):
+                        if i%2==0:
+                            self.blocks.append(Block(config, adaptive = False,epipolar="forward"))
+                        else:
+                            self.blocks.append(Block(config, adaptive = False,epipolar="backward"))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                else:
+                    for _ in range(int(config.n_layer // 2)):
+                        self.blocks.append(Block(config, adaptive = False,epipolar=epipolar))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=None))
+        
+        elif do_cross == True:
+            for _ in range(int(config.n_layer // 2)):
+                #* cross attn 跟 self attn 交替
+                self.blocks.append(Block_cross(config,epipolar="forward"))
+                self.blocks.append(Block_cross(config,epipolar=None))
+
+            self.blocks2 = nn.ModuleList()
+            for _ in range(3):
+                #* cross attn 跟 self attn 交替
+                self.blocks2.append(Block_cross(config,epipolar="backward"))
+                self.blocks2.append(Block_cross(config,epipolar=None))
 
         # decoder head
         self.ln_f = nn.LayerNorm(config.n_embd)
@@ -505,6 +595,112 @@ class GPT(nn.Module):
         # h = h.repeat(x.shape[0], 1, 1, 1)
         for block in self.blocks:
             x = block(x, h,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+        
+        # x = self.blocks(x)
+        x = self.ln_f(x)
+        logits = self.head(x)
+
+        # if we are given some desired targets also calculate the loss
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            
+        return logits, loss
+    
+    def cross_forward(self, dc_emb, z_emb,k=None,w2c=None, embeddings=None, targets=None, return_layers=False):
+        token_embeddings_dc = dc_emb
+
+        # add the token embedding with z_indices
+        token_embeddings_z = z_emb
+        token_embeddings = torch.cat([token_embeddings_dc, token_embeddings_z], 1)
+        
+        # drop out for teacher
+        token_embeddings = self.drop(token_embeddings)
+        
+        b = token_embeddings.shape[0]
+        t = self.start_token.shape[1]
+        start_token = self.start_token.expand(b, -1, -1)
+        assert t <= self.block_size, "Cannot forward, model block size is exhausted."
+        
+        role_emb = []
+        for _ in range(1):
+            role_emb.append(self.frame_emb)
+            role_emb.append(self.camera_emb)
+
+        # role_emb.append(self.frame_emb)
+        role_emb = torch.cat(role_emb, 1)
+
+        #* role emb shape (1,286,1024)
+        #* time emb shape (1,286,1024)
+        
+        role_embeddings = role_emb[:, :t, :] # each position maps to a (learnable) vector
+        time_embeddings = self.time_emb[:, :t, :] # each position maps to a (learnable) vector
+
+        
+        #* x shape (B,286,1024)
+        x = start_token + role_embeddings + time_embeddings
+
+        #! test position emb for src img
+        token_embeddings = token_embeddings + role_embeddings + time_embeddings
+
+        # print(f"input shape = {x.shape}")
+
+        if return_layers:
+            layers = [x]
+            for block in self.blocks:
+                x = block(x)
+                layers.append(x)
+            return layers
+        
+
+        #* 計算epipolar map [forward,backward,bidirectional,token_change]
+        batch = x.shape[0]
+        forward_epipolar_map = None
+        backward_epipolar_map = None
+        if self.epipolar!=None:
+            if self.epipolar == 'forward' or self.epipolar == 'bidirectional' or self.epipolar == 'token_change' or self.epipolar == "alternately":
+                  
+                w2c_0 = w2c[:,0]
+                w2c_1 = w2c[:,1]
+                # w2c_2 = w2c[:,2]
+                f01 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_0,w2c_1)
+                # f02 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_0,w2c_2)
+                # f12 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_1,w2c_2)
+                forward_epipolar_map = [f01]
+            if self.epipolar == 'backward' or self.epipolar == 'bidirectional' or self.epipolar == 'token_change' or self.epipolar == "alternately":
+              
+                w2c_0 = w2c[:,0]
+                w2c_1 = w2c[:,1]
+                # w2c_2 = w2c[:,2]
+                b01 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_1,w2c_0)
+                # b02 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_2,w2c_0)
+                # b12 = self.get_epipolar_tensor(batch,16,16,k.clone(),w2c_2,w2c_1)
+                backward_epipolar_map = [b01]
+
+        # locality
+        # p1, p2, p3 = p
+        # h = self.locality(p1, p2, p3)
+        # h = h.repeat(x.shape[0], 1, 1, 1)
+        iteration = 0
+        for block in self.blocks:
+            if iteration%2==0:
+                #* cross
+                x = block(x,token_embeddings,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+            elif iteration%2==1:
+                #* self
+                x = block(x,x,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+            iteration += 1
+
+        #! 作林老師說的reconstruction 
+        iteration = 0
+        for block in self.blocks2:
+            if iteration%2==0:
+                #* cross
+                x = block(x,token_embeddings,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+            elif iteration%2==1:
+                #* self
+                x = block(x,x,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+            iteration += 1
         
         # x = self.blocks(x)
         x = self.ln_f(x)

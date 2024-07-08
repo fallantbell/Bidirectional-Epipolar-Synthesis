@@ -8,14 +8,34 @@ main.py \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive.yaml \
 --gpu 6,7,8,9
 
-# debug
+# debug 
 
 python -m torch.distributed.launch \
---nproc_per_node=4 --master_port=14902 \
+--nproc_per_node=2 --master_port=14902 \
 main.py \
---dataset realestate --name exp_alternately_epipolar \
+--dataset realestate --name exp_debug \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar.yaml \
---gpu 6,7,8,9
+--gpu 0,1
+
+# train -- for cross
+
+python -m torch.distributed.launch \
+--nproc_per_node=4 --master_port=14901 \
+main.py \
+--dataset realestate --name exp_bidirectional_cross_PE \
+--base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml \
+--len 2 --max_iter 400001 --visual-iter 10000 \
+--gpu 0,1,2,3
+
+# debug  -- for cross
+
+python -m torch.distributed.launch \
+--nproc_per_node=2 --master_port=14902 \
+main.py \
+--dataset realestate --name exp_debug \
+--base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml \
+--len 2 --max_iter 400001 --visual-iter 10000 \
+--gpu 0,1
 
 exp_alternately_epipolar
 
@@ -31,9 +51,9 @@ error_accumulation.py \
 # inference
 
 python ./evaluation/evaluate_realestate.py \
---len 21 --video_limit 200 \
+--len 21 --video_limit 201 \
 --base realestate_16x16_sine_cview_adaptive_epipolar \
---exp exp_bidirection_epipolar_error --gpu 1
+--exp exp_bidirectional_epipolar_full_error --gpu 6
 
 python ./evaluation/evaluate_realestate.py \
 --len 21 --video_limit 200 \

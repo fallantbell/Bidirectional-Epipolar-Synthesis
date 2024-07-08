@@ -51,6 +51,6 @@ alternately 15:
 FID:  130.78453742230175
 
 python -m pytorch_fid --device \
-cuda:0 \
-fid_cal/exp_alternately_epipolar_error/gt/15 \
-fid_cal/exp_alternately_epipolar_error/pred/15
+cuda:4 \
+fid_cal/exp_bidirection_epipolar_error/gt/1_5 \
+fid_cal/exp_bidirection_epipolar_error/pred/1_5

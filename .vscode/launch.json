@@ -17,12 +17,14 @@
             "module": "torch.distributed.run",
             "request": "launch",
             "args": [
-                "--nproc_per_node","2",
+                "--nproc_per_node=2",
+                "--master_port=14902",
                 "main.py",
                 "--dataset","realestate",
                 "--name","exp_debug",
-                "--base","./configs/realestate/realestate_16x16_sine_cview_adaptive.yaml",
-                "--gpu","5,6",
+                "--base","./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml",
+                "--len", "2", "--max_iter", "400001", "--visual-iter" ,"10000",
+                "--gpu","0,1",
             ],
             "console": "integratedTerminal"
         },

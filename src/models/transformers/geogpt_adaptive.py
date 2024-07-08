@@ -9,6 +9,45 @@ from einops import rearrange
 
 from src.main import instantiate_from_config
 
+from timm.models.layers import trunc_normal_
+from timm.models.vision_transformer import Block
+
+class MAE_Encoder(torch.nn.Module):
+    def __init__(self,
+                 image_size=256,
+                 patch_size=16,
+                 emb_dim=1024,
+                 num_layer=16,
+                 num_head=16,
+                 ) -> None:
+        super().__init__()
+
+        self.cls_token = torch.nn.Parameter(torch.zeros(1, 1, emb_dim))
+        self.pos_embedding = torch.nn.Parameter(torch.zeros((image_size // patch_size) ** 2, 1, emb_dim))
+
+        self.patchify = torch.nn.Conv2d(3, emb_dim, patch_size, patch_size)
+
+        self.transformer = torch.nn.Sequential(*[Block(emb_dim, num_head) for _ in range(num_layer)])
+
+        self.layer_norm = torch.nn.LayerNorm(emb_dim)
+
+        self.init_weight()
+
+    def init_weight(self):
+        trunc_normal_(self.cls_token, std=.02)
+        trunc_normal_(self.pos_embedding, std=.02)
+
+    def forward(self, img):
+        patches = self.patchify(img)
+        patches = rearrange(patches, 'b c h w -> (h w) b c')
+        patches = patches + self.pos_embedding
+
+        patches = torch.cat([self.cls_token.expand(-1, patches.shape[1], -1), patches], dim=0)
+        patches = rearrange(patches, 't b c -> b t c')
+        features = self.layer_norm(self.transformer(patches))
+
+        return features
+
 def disabled_train(self, mode=True):
     """Overwrite model.train with this function to make sure train/eval mode
     does not change anymore."""
@@ -32,6 +71,7 @@ class GeoTransformer(nn.Module):
                  emb_stage_trainable=True,
                  top_k=None,
                  epipolar=None,
+                 do_cross = False,
                  ):
 
         super().__init__()
@@ -55,6 +95,10 @@ class GeoTransformer(nn.Module):
         self.top_k = top_k if top_k is not None else 100
 
         self.epipolar = epipolar
+        self.do_cross = do_cross
+
+        # if do_cross:
+        #     self.encoder = MAE_Encoder()
 
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
@@ -137,6 +181,9 @@ class GeoTransformer(nn.Module):
     def forward(self, batch):
         # get time
         B, time_len = batch["rgbs"].shape[0], batch["rgbs"].shape[2]
+
+        if self.do_cross==True:
+            time_len = 2
         
         # create dict
         example = dict()
@@ -193,21 +240,37 @@ class GeoTransformer(nn.Module):
         example["R_rel"] = batch["R_12"]
         example["t_rel"] = batch["t_12"]
         p.append(self.encode_to_p(example))
+
+        if self.do_cross==False:
         
-        #* logits shape = (B,827,16384)
-        logits, _ = self.transformer.iter_forward(prototype, z_emb, p = p,k=batch["K_ori"],w2c=batch['w2c_seq'])
-        #* logits shape = (B,542,16384)
-        #* 542 = 256+30+256
-        logits = logits[:, prototype.shape[1]-1:] 
+            #* logits shape = (B,827,16384)
+            logits, _ = self.transformer.iter_forward(prototype, z_emb, p = p,k=batch["K_ori"],w2c=batch['w2c_seq'])
+            #* logits shape = (B,542,16384)
+            #* 542 = 256+30+256
+            logits = logits[:, prototype.shape[1]-1:] 
+            
+            for t in range(0, time_len-2):
+                forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二個rgb 字典機率
+            
+            forecasts.append(logits[:, -256::, :]) # final frame    #* 預測的第三個rgb 字典機率
+            
+            loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
+            
+            return forecasts, gts, loss, log_dict
         
-        for t in range(0, time_len-2):
-            forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二個rgb 字典機率
-        
-        forecasts.append(logits[:, -256::, :]) # final frame    #* 預測的第三個rgb 字典機率
-        
-        loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
-        
-        return forecasts, gts, loss, log_dict
+        elif self.do_cross==True:
+            # src_emb = self.encoder(batch["rgbs"][:, :, 0, ...])
+
+            logits, _ = self.transformer.cross_forward(prototype, z_emb[:,:0],k=batch["K_ori"],w2c=batch['w2c_seq'])
+            forecasts.append(logits[:, 0:256, :])
+
+            forec = torch.cat(forecasts, 0)
+            gt = torch.cat(gts, 0)
+
+            loss, log_dict = self.compute_loss(forec[:,:256],gt[:,:256], split="train")
+
+            return forecasts, gts, loss, log_dict
+
 
     def top_k_logits(self, logits, k):
         v, ix = torch.topk(logits, k)
@@ -361,6 +424,9 @@ class GeoTransformer(nn.Module):
     def compute_loss(self, logits, targets, split="train"):
         #* logits shape: (B*2,256,16384) -> (B*2*256,16384)
         #* target shape: (B*2,256) -> (B*2*256)
+
+        # print(f"logit loss shape = {logits.shape}")
+        # print(f"target shape = {targets.shape}")
         loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
         return loss, {f"{split}/loss": loss.detach()}
 

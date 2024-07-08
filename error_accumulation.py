@@ -181,8 +181,11 @@ for idx in pbar:
     for key in batch.keys():
         batch[key] = batch[key].cuda()
     
-    forecasts, gts, loss, log_dict = module(batch, sample = args.sample, top_k = args.topk, temperature = args.T)
-    
+    if config.model.do_cross==True:
+        forecasts, gts, loss, log_dict = module.cross_forward(batch)
+    else:
+        forecasts, gts, loss, log_dict = module(batch, sample = args.sample, top_k = args.topk, temperature = args.T)
+
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
