@@ -31,7 +31,9 @@ class GeoTransformer(nn.Module):
                  emb_stage_config=None,
                  emb_stage_key="camera",
                  emb_stage_trainable=True,
-                 top_k=None
+                 top_k=None,
+                 two_cond = False,
+                 gradually = False,
                  ):
 
         super().__init__()
@@ -53,6 +55,11 @@ class GeoTransformer(nn.Module):
         self.emb_stage_trainable = emb_stage_trainable and emb_stage_config is not None
         self.init_emb_stage_from_ckpt(emb_stage_config)
         self.top_k = top_k if top_k is not None else 100
+
+        self.two_cond = two_cond
+        self.gradually = gradually
+        if gradually:
+            print(f"yes")
 
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
@@ -239,7 +246,7 @@ class GeoTransformer(nn.Module):
         loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
         return forecasts, gts, loss, log_dict
 
-    def cross_forward(self, batch):
+    def cross_forward(self, batch,idx = 0):
         # get time
         B, time_len = batch["rgbs"].shape[0], batch["rgbs"].shape[2]        
         # set train pair
@@ -255,6 +262,15 @@ class GeoTransformer(nn.Module):
         for t in range(1, time_len):
             _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...])            
             gt_clips.append(c_indices) # for loss
+
+        #* 逐步的訓練, 讓模型能漸進學習
+        if self.gradually:
+            train_num = (idx//25000)+1
+        else:
+            train_num = time_len
+        
+        # print(f'idx = {idx}')
+        # print(f"train num = {train_num}")
         
         for i in range(0,time_len-1):
             conditions = []
@@ -285,8 +301,46 @@ class GeoTransformer(nn.Module):
             prototype = conditions[:, 0:286, :]
             z_emb = conditions[:, 286::, :]
 
-            logits, _ = self.transformer.cross_forward(prototype, z_emb,k=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+3,...])
+            #* ------------------------------------------------------------------------
+            #* two condition 專用
 
+            if self.two_cond==True: 
+                two_cond_w2c = batch['w2c_seq'].clone()
+                two_conditions = []
+                if i == 0:
+                    #* 因為一開始只有一張圖片，所以兩個condition 都選第一張
+                    two_conditions.append(c_emb)
+                    two_conditions.append(embeddings_warp)
+
+                    two_cond_w2c[:,2] = batch['w2c_seq'][:,1].clone()
+                    two_cond_w2c[:,1] = batch['w2c_seq'][:,0].clone()
+                    two_cond_w2c[:,0] = batch['w2c_seq'][:,0].clone()
+                else:
+                    #*  前前張圖片的condition
+                    _, c_indices = self.encode_to_c(video_clips[-2])
+                    c_emb2 = self.transformer.tok_emb(c_indices)
+                    two_conditions.append(c_emb2)
+
+                    R_rel, t_rel = self.compute_camera_pose(batch["R_s"][:, i+1, ...], batch["t_s"][:, i+1, ...],
+                                                             batch["R_s"][:, i-1, ...], batch["t_s"][:, i-1, ...])
+                    example["R_rel"] = R_rel
+                    example["t_rel"] = t_rel
+                    embeddings_warp2 = self.encode_to_e(example)
+                    two_conditions.append(embeddings_warp2)
+
+                #* 前一張圖片的condition
+                two_conditions.append(c_emb)
+                two_conditions.append(embeddings_warp)
+
+                two_conditions = torch.cat(two_conditions,1)
+            #* ------------------------------------------------------------------------
+
+            if self.two_cond==False:
+                logits, _ = self.transformer.cross_forward(prototype,k=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+2,...])
+            elif self.two_cond==True: 
+                logits, _ = self.transformer.cross_forward(rgb1_emb = two_conditions[:,286:,:],
+                                                           rgb0_emb = two_conditions[:,0:286,:],
+                                                           k=batch["K_ori"],w2c= two_cond_w2c) 
 
             for t in range(0, 1):
                 # get prediction
@@ -297,8 +351,18 @@ class GeoTransformer(nn.Module):
                 video_clips.append(predict)
                 # get gts
                 gts.append(gt_clips[i+t])
+            
+            if i+1 >= train_num:
+                break
 
         loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
+        
+        last_fore = forecasts[-1]
+        last_gt = gts[-1]
+        while len(forecasts)<time_len-1:
+            forecasts.append(last_fore)
+            gts.append(last_gt)
+
         return forecasts, gts, loss, log_dict
 
     def top_k_logits(self, logits, k):

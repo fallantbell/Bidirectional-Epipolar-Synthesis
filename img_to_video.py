@@ -18,7 +18,10 @@ def write_video(type,video_num):
         type = "exp_forward_epipolar_error"
 
     # 資料夾路徑
-    folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_200_gap_10/{video_num}'
+    if type == 'exp_bidirectional_epipolar_full_error':
+        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_1000_gap_10/{video_num}'
+    else:
+        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_250_ckpt_100000/{video_num}'
 
     # 影片儲存路徑及檔名
     os.makedirs(f'saved_video/{video_num}',exist_ok=True)
@@ -56,13 +59,12 @@ def write_video(type,video_num):
 if __name__ == '__main__':
 
     model_type = [
-        'gt',
-        'exp_base_error',
-        'exp_alternately_epipolar_error',
-        'exp_forward_epipolar_error',
-        'exp_bidirection_epipolar_error',
+        # 'exp_forward_epipolar_cont_error',
+        'exp_bidirectional_epipolar_full_error',
+        'exp_forward_epipolar_full_10kdata_error',
+        'exp_forward_epipolar_cont_error'
                   ]
-    video_num = "005"
+    video_num = "195"
 
     for type in model_type:
         write_video(type,video_num)

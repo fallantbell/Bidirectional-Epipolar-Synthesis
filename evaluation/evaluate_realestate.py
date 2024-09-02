@@ -1,7 +1,7 @@
 import math
 import random
 import os
-cpu_num = 12  # Num of CPUs you want to use
+cpu_num = 8  # Num of CPUs you want to use
 os.environ['OMP_NUM_THREADS'] = str(cpu_num)
 os.environ['OPENBLAS_NUM_THREADS'] = str(cpu_num)
 os.environ['MKL_NUM_THREADS'] = str(cpu_num)
@@ -64,7 +64,7 @@ else:
 video_limit = args.video_limit
 frame_limit = args.len
 
-target_save_path = "./experiments/realestate/%s/evaluate_frame_%d_video_%d_gap_%d/" % (args.exp, frame_limit, video_limit, args.gap)
+target_save_path = "./experiments/realestate/%s/evaluate_frame_%d_video_%d_ckpt_%s/" % (args.exp, frame_limit, video_limit, args.ckpt)
 if args.GT_start:
     target_save_path = "./experiments/realestate/%s/evaluate_frame_%d_video_%d_GTstart/" % (args.exp, frame_limit, video_limit)
 os.makedirs(target_save_path, exist_ok=True)
@@ -112,7 +112,7 @@ from src.data.realestate.re10k_dataset import Re10k_dataset
 sparse_dir = "%s/sparse/" % args.data_path
 image_dir = "%s/dataset/" % args.data_path
 # dataset_abs = VideoDataset(sparse_dir = sparse_dir, image_dir = image_dir, length = args.len, low = args.gap, high = args.gap, split = "test")
-dataset_abs = Re10k_dataset(data_root="../../../disk2/icchiu",mode="test",infer_len=args.len)
+dataset_abs = Re10k_dataset(data_root="../dataset",mode="test",infer_len=args.len)
 
 test_loader_abs = torch.utils.data.DataLoader(
         dataset_abs,
@@ -257,6 +257,27 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 example["t_rel"] = t_rel.unsqueeze(0)
                 p3 = temp_model.encode_to_p(example)
 
+                #* ------------------------------------------------------------------
+                #* for cross
+                #* 更改camera pose , 原本取最後是取到 cam 0 跟 cam 2 , 但是應該取的是 cam 1 跟 cam 2 
+
+                if args.cross == True:
+                    conditions = []
+
+                    example["src_img"] = video_clips[-1]
+                    _, c_indices = temp_model.encode_to_c(example["src_img"])
+                    c_emb = temp_model.transformer.tok_emb(c_indices)
+                    conditions.append(c_emb)
+
+                    R_rel, t_rel = compute_camera_pose(batch["R_s"][0, i+t+2, ...], batch["t_s"][0, i+t+2, ...], 
+                                                   batch["R_s"][0, i+t+1, ...], batch["t_s"][0, i+t+1, ...])
+                    example["R_rel"] = R_rel.unsqueeze(0)
+                    example["t_rel"] = t_rel.unsqueeze(0)
+                    embeddings_warp = temp_model.encode_to_e(example)
+                    conditions.append(embeddings_warp)
+
+                #* ------------------------------------------------------------------
+
                 prototype = torch.cat(conditions, 1)
 
                 z_start_indices = c_indices[:, :0]
@@ -291,12 +312,19 @@ n_values_percsim = []
 n_values_ssim = []
 n_values_psnr = []
 
-pbar = tqdm(total=video_limit)
+pbar = tqdm(total=1000)
 b_i = 0
 iteration = iter(test_loader_abs)
+skip_num = 100
+cnt = 0
 while b_i < video_limit:    
+
     try:
         batch, index, inter_index = next(iteration)
+        if cnt<skip_num:
+            cnt+=1
+            pbar.update(1)
+            continue
     except:
         continue
                 
@@ -307,7 +335,7 @@ while b_i < video_limit:
     values_psnr = []
         
 
-    sub_dir = os.path.join(target_save_path, "%03d" % b_i)
+    sub_dir = os.path.join(target_save_path, "%03d" % (cnt+b_i))
     os.makedirs(sub_dir, exist_ok=True)
             
     for key in batch.keys():
@@ -353,7 +381,7 @@ total_percsim = []
 total_ssim = []
 total_psnr = []
 
-with open(os.path.join(target_save_path, "eval.txt"), 'w') as f:
+with open(os.path.join(target_save_path, "eval_1.txt"), 'w') as f:
     for i in range(len(n_values_percsim)):
 
         f.write("#%d, percsim: %.04f, ssim: %.02f, psnr: %.02f" % (i, np.mean(n_values_percsim[i]), 

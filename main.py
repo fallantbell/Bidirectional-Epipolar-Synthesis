@@ -76,7 +76,7 @@ if __name__ == '__main__':
     parser.add_argument("--data-path", type=str, default="/latent_opt_test/RealEstate10K_Downloader/",
                         help="data path")
     parser.add_argument("--batch-size", type=int, default=2, help="")
-    parser.add_argument("--ckpt-iter", type=int, default=10000,
+    parser.add_argument("--ckpt-iter", type=int, default=50000,
                         help="interval for visual the result")
     parser.add_argument("--visual-iter", type=int, default=500,
                         help="interval for visual the result")
@@ -103,7 +103,7 @@ if __name__ == '__main__':
         
     max_iter = args.max_iter
     ngpu = n_gpu
-    accumulate_grad_batches = 4
+    accumulate_grad_batches = 2
     time_len = args.len
 
     # first make the dir
@@ -180,7 +180,9 @@ if __name__ == '__main__':
             batch[key] = batch[key].cuda()
         
         forecasts, gts, loss, log_dict = module(batch)
-        
+        # forecasts, gts, loss_all, loss_forward, forecasts_forward = module(batch)
+        # loss = loss_all + loss_forward
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -188,12 +190,14 @@ if __name__ == '__main__':
 
         # update tensorboard
         summary.add_scalar(tag='loss', scalar_value=loss.mean().item(), global_step=idx)
+        # summary.add_scalar(tag='loss_forward', scalar_value=loss_forward.mean().item(), global_step=idx)
+        # summary.add_scalar(tag='loss_all', scalar_value=loss_all.mean().item(), global_step=idx)
         
         if get_rank() == 0:
             pbar.set_description((f"loss: {loss:.4f};"))
 
             if idx % args.ckpt_iter == 0:
-                torch.save(module.state_dict(), os.path.join(save_dir, "last.ckpt"))
+                torch.save(module.state_dict(), os.path.join(save_dir, f"{idx}.ckpt"))
 
         if idx % args.visual_iter == 0:
             if get_rank() == 0:
@@ -226,7 +230,21 @@ if __name__ == '__main__':
                 pred_clip = vutils.make_grid(torch.cat(pred_clip, 0))
                 pred_clip = (pred_clip + 1)/2
 
+                #* predict_forward
+                # predict_1_f = batch["rgbs"][0:1, :, 0].cuda()
+                # pred_clip_f = [predict_1_f]
+                
+                # with torch.no_grad():
+                #     for i in range(time_len - 1):
+                #         predict = torch.argmax(forecasts_forward[i], 2)[0]
+                #         predict = module.decode_to_img(predict, [1, 256, 16,16])
+                #         pred_clip_f.append(predict)
+
+                # pred_clip_f = vutils.make_grid(torch.cat(pred_clip_f, 0))
+                # pred_clip_f = (pred_clip_f + 1)/2
+
                 merge = torch.cat([gt_clip.cpu(), recon_clip.cpu(), pred_clip.cpu()], 1).clamp(0,1)
+                # merge = torch.cat([gt_clip.cpu(), recon_clip.cpu(), pred_clip_f.cpu(), pred_clip.cpu()], 1).clamp(0,1)
                 plt.imsave(os.path.join(visual_dir, "%06d.png" % idx), merge.permute(1,2,0).numpy())
 
                 dist.barrier()

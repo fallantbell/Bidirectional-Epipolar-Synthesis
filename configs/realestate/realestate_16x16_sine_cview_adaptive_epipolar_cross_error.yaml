@@ -3,8 +3,10 @@ model:
   do_cross: True
   target: src.models.transformers.geogpt_adaptive_error.GeoTransformer
   params: 
-    ckpt_path: "experiments/realestate/exp_bidirectional_cross/model/last.ckpt"  #* forward, bidirectional, alternately
+    ckpt_path: "experiments/realestate/exp_cross_recon_equal_sepPE/model/400000.ckpt"  #* forward, bidirectional, alternately
     use_depth: False # depth is not provided to transformer
+    two_cond: False   #* 是否使用兩個image 當作condition
+    gradually: True   #* 是否使用漸進訓練
 
     use_scheduler: True
     scheduler_config:
@@ -29,6 +31,8 @@ model:
         n_embd: 1024
         epipolar: "bidirectional"  #* forward, bidirectional, alternately
         do_cross: True
+        sep_pe: True  #* condition 跟 target 是否分開坐 position encode
+        two_cond: False  #* 是否使用兩個image 當作condition
 
     first_stage_key:
       x: "dst_img"

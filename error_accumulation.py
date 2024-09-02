@@ -182,7 +182,7 @@ for idx in pbar:
         batch[key] = batch[key].cuda()
     
     if config.model.do_cross==True:
-        forecasts, gts, loss, log_dict = module.cross_forward(batch)
+        forecasts, gts, loss, log_dict = module.cross_forward(batch,idx)
     else:
         forecasts, gts, loss, log_dict = module(batch, sample = args.sample, top_k = args.topk, temperature = args.T)
 
@@ -198,13 +198,13 @@ for idx in pbar:
         pbar.set_description((f"loss: {loss:.4f};"))
 
         if idx % args.ckpt_iter == 0:
-            torch.save(module.state_dict(), os.path.join(save_dir, "last.ckpt"))
+            torch.save(module.state_dict(), os.path.join(save_dir, f"{idx}.ckpt"))
 
     if idx % args.visual_iter == 0:
         if get_rank() == 0:
-            print(f"batch rgb shape: {batch['rgbs'][0].shape}")
-            print(f"batch rgb min: {batch['rgbs'][0].min()}")
-            print(f"batch rgb max: {batch['rgbs'][0].max()}")
+            # print(f"batch rgb shape: {batch['rgbs'][0].shape}")
+            # print(f"batch rgb min: {batch['rgbs'][0].min()}")
+            # print(f"batch rgb max: {batch['rgbs'][0].max()}")
             gt_clip = batch["rgbs"][0].permute(1,0,2,3)
             gt_clip = vutils.make_grid(gt_clip)
             gt_clip = (gt_clip + 1)/2
@@ -212,8 +212,8 @@ for idx in pbar:
             # recon
             predict_1 = batch["rgbs"][0:1, :, 0].cuda()
             recon_clip = [predict_1]
-            print(f"gt shape = {len(gts)}")
-            print(f"timelen = {time_len}")
+            # print(f"gt shape = {len(gts)}")
+            # print(f"timelen = {time_len}")
             with torch.no_grad():
                 for i in range(time_len - 1):
                     predict = gts[i][0]

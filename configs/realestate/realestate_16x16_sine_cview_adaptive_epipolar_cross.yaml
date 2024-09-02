@@ -5,6 +5,8 @@ model:
     use_depth: False # depth is not provided to transformer but only used to rescale t
     epipolar: "bidirectional" #* forward, bidirectional, alternately
     do_cross: True
+    two_cond: False   #* 是否使用兩個image 當作condition
+    # ckpt_path: "experiments/realestate/exp_bidirectional_cross_recon/model/last.ckpt"
 
     use_scheduler: True
     scheduler_config:
@@ -30,6 +32,7 @@ model:
         epipolar: "bidirectional" #* forward, bidirectional, alternately
         do_cross: True
         sep_pe: False  #* condition 跟 target 是否分開坐 position encode
+        two_cond: False  #* 是否使用兩個image 當作condition
 
     first_stage_key:
       x: "dst_img"
@@ -81,5 +84,5 @@ model:
 
 lightning:
   trainer:
-    accumulate_grad_batches: 4
+    accumulate_grad_batches: 2
     benchmark: True

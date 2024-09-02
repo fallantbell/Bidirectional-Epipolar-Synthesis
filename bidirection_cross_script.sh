@@ -11,6 +11,6 @@ main.py \
 python -m torch.distributed.launch \
 --nproc_per_node=4 --master_port=14904 \
 error_accumulation.py \
---dataset realestate --name exp_bidirectional_cross_error \
+--dataset realestate --name exp_bidirectional_cross_recon2_error \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross_error.yaml \
 --gpu 0,1,2,3

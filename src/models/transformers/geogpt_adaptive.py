@@ -72,6 +72,7 @@ class GeoTransformer(nn.Module):
                  top_k=None,
                  epipolar=None,
                  do_cross = False,
+                 two_cond = False,
                  ):
 
         super().__init__()
@@ -96,6 +97,7 @@ class GeoTransformer(nn.Module):
 
         self.epipolar = epipolar
         self.do_cross = do_cross
+        self.two_cond = two_cond
 
         # if do_cross:
         #     self.encoder = MAE_Encoder()
@@ -104,13 +106,14 @@ class GeoTransformer(nn.Module):
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         
     def init_from_ckpt(self, path, ignore_keys=list()):
-        sd = torch.load(path, map_location="cpu")["state_dict"]
+        # sd = torch.load(path, map_location="cpu")["state_dict"]
+        sd = torch.load(path, map_location="cpu")
         for k in sd.keys():
             for ik in ignore_keys:
                 if k.startswith(ik):
                     self.print("Deleting key {} from state_dict.".format(k))
                     del sd[k]
-        missing, unexpected = self.load_state_dict(sd, strict=False)
+        missing, unexpected = self.load_state_dict(sd, strict=True)
         print(f"Restored from {path} with {len(missing)} missing keys and {len(unexpected)} unexpected keys.")
 
     def init_first_stage_from_ckpt(self, config):
@@ -230,6 +233,42 @@ class GeoTransformer(nn.Module):
         c_emb = self.transformer.tok_emb(c_indices)
         conditions.append(c_emb)
         gts.append(c_indices)
+
+
+        #* ------------------------------------------------------------------------
+        #* two condition 專用
+
+        two_conditions = []
+        if self.two_cond == True:
+            time_len = 3
+            gts = []
+            for t in range(0, time_len-1): 
+                _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...])
+                c_emb = self.transformer.tok_emb(c_indices)
+                two_conditions.append(c_emb)
+
+                if t == 0:
+                    example["R_rel"] = batch["R_02"]
+                    example["t_rel"] = batch["t_02"]
+                    embeddings_warp = self.encode_to_e(example)
+                    two_conditions.append(embeddings_warp)
+                if t == 1:
+                    example["R_rel"] = batch["R_12"]
+                    example["t_rel"] = batch["t_12"]
+                    embeddings_warp = self.encode_to_e(example)
+                    two_conditions.append(embeddings_warp)
+                if t > 0:
+                    gts.append(c_indices)
+
+            #! 這裡沒注意到 two cond 的GT 應該要是 rgb2 而不是原本的 rgb1, time_len 有改
+            _, c_indices = self.encode_to_c(batch["rgbs"][:, :, time_len-1, ...]) # final frame
+            c_emb = self.transformer.tok_emb(c_indices)
+            conditions.append(c_emb)
+            gts.append(c_indices)
+
+            two_conditions = torch.cat(two_conditions,1)
+        #* ------------------------------------------------------------------------
+
         
         #* condition = [rgb1_emb,cam01_emb,rgb2_emb,cam12_emb,rgb3_emb]
         conditions = torch.cat(conditions, 1) # B, L, 1024
@@ -261,14 +300,33 @@ class GeoTransformer(nn.Module):
         elif self.do_cross==True:
             # src_emb = self.encoder(batch["rgbs"][:, :, 0, ...])
 
-            logits, _ = self.transformer.cross_forward(prototype, z_emb[:,:0],k=batch["K_ori"],w2c=batch['w2c_seq'])
+            # logits, _, logits_forward = self.transformer.cross_forward(prototype, z_emb[:,:0],k=batch["K_ori"],w2c=batch['w2c_seq'])
+            
+            if self.two_cond==False:
+                #* 原本的作法是根據 rgb0 rgb1 和 cam01 預測 rgb1
+                logits, _ = self.transformer.cross_forward(prototype,k=batch["K_ori"],w2c=batch['w2c_seq'])
+            elif self.two_cond==True:  
+                #* two cond 的作法是根據 rgb0 rgb1 rgb2 和 cam02 cam12 預測 rgb2
+                #* 所以 GT 會不一樣
+                logits, _ = self.transformer.cross_forward(rgb1_emb = two_conditions[:,286:,:],
+                                                           rgb0_emb = two_conditions[:,0:286,:],
+                                                           k=batch["K_ori"],w2c=batch['w2c_seq']) 
+                
+                forecasts.append(logits[:, 0:256, :]) #* 為了符合顯示結果多塞一個gt, 並不參與loss
+
             forecasts.append(logits[:, 0:256, :])
 
             forec = torch.cat(forecasts, 0)
             gt = torch.cat(gts, 0)
 
-            loss, log_dict = self.compute_loss(forec[:,:256],gt[:,:256], split="train")
+            loss, log_dict = self.compute_loss(forec[:,-256:],gt[:,-256:], split="train")
 
+            # forecasts_forward = []
+            # forecasts_forward.append(logits_forward[:, 0:256, :])
+            # forec_forward = torch.cat(forecasts_forward, 0)
+            # loss_forward, log_dict_forward = self.compute_loss(forec_forward[:,:256],gt[:,:256], split="train_forward")
+
+            # return forecasts, gts, loss, loss_forward, forecasts_forward
             return forecasts, gts, loss, log_dict
 
 
@@ -379,7 +437,7 @@ class GeoTransformer(nn.Module):
                callback=lambda k: None, embeddings=None, **kwargs):
         assert not self.transformer.training
 
-        logits, _ = self.transformer.cross_forward(prototype, z_emb[:,:0],k=k_ori.clone(),w2c=w2c)
+        logits, _ = self.transformer.cross_forward(prototype,k=k_ori.clone(),w2c=w2c)
 
         if top_k is not None:
             logits = self.top_k_logits(logits, top_k)
