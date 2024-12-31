@@ -18,10 +18,10 @@ def write_video(type,video_num):
         type = "exp_forward_epipolar_error"
 
     # 資料夾路徑
-    if type == 'exp_bidirectional_epipolar_full_error':
-        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_1000_gap_10/{video_num}'
+    if type == 'exp_fixed_bi_epipolar_maskcam_sepsoft-4_4gpu':
+        folder_path = f'experiments/realestate/{type}/evaluate_frame_6_video_250_ckpt_200000/{video_num}'
     else:
-        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_250_ckpt_100000/{video_num}'
+        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_1000_ckpt_100000/{video_num}'
 
     # 影片儲存路徑及檔名
     os.makedirs(f'saved_video/{video_num}',exist_ok=True)
@@ -42,14 +42,18 @@ def write_video(type,video_num):
 
     # 設定影片編碼器、FPS、影片大小
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    fps = 5
+    fps = 5 # 5
     video_writer = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
     # 逐一讀取圖片並寫入影片
+    cnt = 0
     for image_file in image_files:
         image_path = os.path.join(folder_path, image_file)
         image = cv2.imread(image_path)
         video_writer.write(image)
+        cnt +=1
+        if cnt >=20:
+            break 
 
     # 釋放影片寫入器
     video_writer.release()
@@ -59,12 +63,9 @@ def write_video(type,video_num):
 if __name__ == '__main__':
 
     model_type = [
-        # 'exp_forward_epipolar_cont_error',
-        'exp_bidirectional_epipolar_full_error',
-        'exp_forward_epipolar_full_10kdata_error',
-        'exp_forward_epipolar_cont_error'
+        'exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error',
                   ]
-    video_num = "195"
+    video_num = "005"
 
     for type in model_type:
         write_video(type,video_num)

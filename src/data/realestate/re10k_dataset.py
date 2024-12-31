@@ -466,9 +466,9 @@ class Re10k_dataset(Dataset):
 
 
 if __name__ == '__main__':
-    test = Re10k_dataset("../dataset","test")
+    test = Re10k_dataset("../dataset","train")
     # print(test.video_dirs[:10])
-    data,_,_ = test[0]
+    data = test[0]
     print(data["rgbs"].shape)
     # print(data['img'].shape)
     # print(data['intrinsics'])

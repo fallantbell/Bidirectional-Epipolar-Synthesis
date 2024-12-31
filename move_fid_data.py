@@ -4,11 +4,11 @@ import shutil
 # exp_bidirectional_cross_PE/evaluate_frame_21_video_1001_ckpt_last
 # exp_cross_recon_equal_sepPE_error/evaluate_frame_21_video_1001_ckpt_100000
 
-exp = "exp_forward_epipolar_full_10kdata_error"
+exp = "exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error"
 nums = ["01","05","10","15","20"]
 # nums = ["20"]
 
-src = f"experiments/realestate/{exp}/evaluate_frame_21_video_250_ckpt_100000"
+src = f"experiments/realestate/{exp}/evaluate_frame_21_video_250_ckpt_100000_mask0.950000"
 target = f"fid_cal/{exp}"
 
 #* 移動單個frame
@@ -22,7 +22,10 @@ for num in nums:
     os.makedirs(target_gt,exist_ok=True)
     os.makedirs(target_pred,exist_ok=True)
 
+    cnt = 0
     for folder in os.listdir(src):
+        if len(os.listdir(f"{src}/{folder}"))==0 :
+            continue
         if folder == "eval_0.txt" or folder == "eval_1.txt" or folder == "eval_2.txt" or folder == "eval_3.txt" or folder == "eval_4.txt":
             continue
         src_gt_file = f"{src}/{folder}/gt_{num}.png"
@@ -33,6 +36,9 @@ for num in nums:
 
         shutil.copy2(src_gt_file, target_gt_file)
         shutil.copy2(src_pred_file, target_pred_file)
+        cnt += 1
+        if cnt>=1000:
+            break
 
 #* 將多個frame 合併
 

@@ -181,7 +181,7 @@ class cross_Attention(nn.Module):
         return y
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config, adaptive,epipolar = None,do_blur = False):
+    def __init__(self, config, adaptive,epipolar = None,do_blur = False,mask_cam = False):
         super().__init__()
         assert config.n_embd % config.n_head == 0, f"n_embd is {config.n_embd} but n_head is {config.n_head}."
         # key, query, value projections for all heads
@@ -221,15 +221,18 @@ class CausalSelfAttention(nn.Module):
         self.epipolar = epipolar
         self.gaussian_transform = T.GaussianBlur(7,1.5)
         self.do_blur = do_blur
+        self.mask_cam = mask_cam
+        if self.mask_cam:
+            print(f"mask cam = true")
         
-    def forward(self, x, h, layer_past=None,forward_map = None,backward_map = None):
+    def forward(self, x, x_kv, h, layer_past=None,forward_map = None,backward_map = None,return_attn=False):
         B, T, C = x.size()
         # print(f"T = {T}")
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = self.key(x_kv).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = self.value(x_kv).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
@@ -237,7 +240,18 @@ class CausalSelfAttention(nn.Module):
         if self.adaptive:
             att = h[:,:,:T,:T] + att
         
+        epipolar_attn_map = None
         if self.epipolar!=None:
+            #* 在做epipolar 之前先把attention 經由softmax 全為正數, 有負數有可能會出錯
+            att[:,:,285:541, 0:256] = F.softmax(att[:,:,285:541, 0:256],dim=-1)
+            att[:, :, 571:827, 0:256] = F.softmax(att[:,:,571:827, 0:256],dim=-1)
+            att[:, :, 571:827, 286:542] = F.softmax(att[:,:,571:827, 286:542],dim=-1)
+            if return_attn:
+                epipolar_attn_map = att.clone()
+                epipolar_attn_map = epipolar_attn_map.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
+                # epipolar_attn_map = F.softmax(epipolar_attn_map,dim=-1)
+                # epipolar_attn_map[:, :, 571:827, 0:256] = F.softmax(epipolar_attn_map[:, :, 571:827, 0:256], dim=-1)
+                # epipolar_attn_map[:, :, 571:827, 286:542] = F.softmax(epipolar_attn_map[:, :, 571:827, 286:542], dim=-1)
             if self.epipolar == "forward":
                 # forward_map = repeat(forward_map,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
                 f01, f02, f12 = forward_map
@@ -272,6 +286,9 @@ class CausalSelfAttention(nn.Module):
                 b01 = b01.permute(0,2,1)
                 b02 = b02.permute(0,2,1)
                 b12 = b12.permute(0,2,1)
+
+                bi_12 = f12*b12
+                bi_12_mask = (bi_12>=0.1).float() #* 用來看epipolar line 所選定的區域, epipolar 內的區域為1 其餘為0
 
                 if self.do_blur:
 
@@ -317,7 +334,32 @@ class CausalSelfAttention(nn.Module):
                     b02 = repeat(b02,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
                     b12 = repeat(b12,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
 
+                    bi_12_mask = repeat(bi_12_mask,'b hw hw2 -> b nh hw hw2',nh=att.shape[1])
+                    if T==827:
+                        #* token 對整張圖的attention平均值
+                        att_mean = att[:,:,571:827,286:542].mean(dim=-1)
+                        
+                        att_mask = att[:, :, 571:827, 286:542]*bi_12_mask[:,:,:T-571,...]
+                        #* bidirection epipolar 所在區域的token 數 (b nh hw)
+                        bi_12_mask_sum = bi_12_mask[:,:,:T-571,...].sum(dim=-1)
+                        #* 區域內attention 的總和 / 區域token 數 = epipolar 範圍內的attention 平均值
+                        att_mask_mean = att_mask.sum(dim=-1) / bi_12_mask_sum
 
+                        #* epipolar 範圍內attention 佔全體的比例，比例越高代表這個token 有更好的找到對應epipolar的區塊，也代表這個token 更可信
+                        #* (b hw)
+                        bi_epi_ratio = att_mask_mean.mean(dim=1) / att_mean.mean(dim=1)
+                    elif T==541:
+                        att_mean = att[:,:,285:541, 0:256].mean(dim=-1)
+                        att_mask = att[:, :,285:541, 0:256]*bi_12_mask[:,:,:min(T-285,256),...]
+                        bi_12_mask_sum = bi_12_mask[:,:,:min(T-285,256),...].sum(dim=-1)
+                        att_mask_mean = att_mask.sum(dim=-1) / bi_12_mask_sum
+                        bi_epi_ratio = att_mask_mean.mean(dim=1) / att_mean.mean(dim=1)
+                    else:
+                        #* 只有第二張image 或 第三張image 全部token 生成完畢才需要計算ratio 回傳
+                        #* 所以只需要看 T=541 跟 T=827 就好，其他不需要重複計算
+                        bi_epi_ratio = None
+
+          
                     att[:,:,285:541, 0:256] = att[:,:,285:541, 0:256]*b01[:,:,:min(T-285,256),...]*f01[:,:,:min(T-285,256),...]
                     if T>571:
                         att[:, :, 571:827, 0:256] = att[:, :, 571:827, 0:256]*b02[:,:,:T-571,...]*f02[:,:,:T-571,...]
@@ -329,35 +371,75 @@ class CausalSelfAttention(nn.Module):
             else:
                 raise AssertionError("Invalid type for epipolar")
         
-        att = att.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        att = self.attn_drop(att)
+            if self.mask_cam:
+                #* 想說做cross attention 除了圖片還是會看到 cam embedding,
+                #* 不知道是不是因為被cam token 汙染導致token 跟 origin image 對不上
+                #* 把她cam 部分全部mask 掉, 讓預測的token 只能看到origin image
+                att[:,:,285:541, 256:] = float('-inf')
+                att[:,:,571:827, 256:286] = float('-inf')
+                att[:,:,571:827, 542:] = float('-inf')
+                # att[:,:,285:541, 256:] = 0
+                # att[:,:,571:827, 256:286] = 0
+                # att[:,:,571:827, 542:] = 0
+
+        # if self.epipolar==None:
+        att_weight = att.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
+        if self.epipolar!=None:
+            att_weight[:, :, 571:827, 0:256]= F.softmax(att[:, :, 571:827, 0:256], dim=-1)
+            att_weight[:, :, 571:827, 286:542]= F.softmax(att[:, :, 571:827, 286:542], dim=-1)
+        att_weight = F.softmax(att_weight, dim=-1)
+        # if self.epipolar!=None:
+        #     att_weight = att.masked_fill(self.mask[:,:,:T,:T] == 0, 0)
+        #     att_weight[:,:,285:541, 0:256] = F.softmax(att_weight[:,:,285:541, 0:256], dim=-1)
+        #     att_weight[:, :, 571:827, 0:256]= F.softmax(att[:, :, 571:827, 0:256], dim=-1)
+        #     att_weight[:, :, 571:827, 286:542]= F.softmax(att[:, :, 571:827, 286:542], dim=-1)
+            # att_weight[:, :, 571:827, :] = F.softmax(att_weight[:, :, 571:827, :], dim=-1)
+
+        att = self.attn_drop(att_weight)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_drop(self.proj(y))
-        return y
 
+        if return_attn:
+            return y, epipolar_attn_map,att_weight,bi_epi_ratio
+        else:
+            if self.epipolar!=None:
+                return y,[],[],bi_epi_ratio
+            else:
+                return y,[],[],[]
 
 class Block(nn.Module):
     """ an unassuming Transformer block """
-    def __init__(self, config, adaptive,epipolar=None,do_blur=False):
+    def __init__(self, config, adaptive,epipolar=None,do_blur=False,mask_cam=False,selfremain=False):
         super().__init__()
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.ln2 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config, adaptive,epipolar,do_blur)
+        self.attn = CausalSelfAttention(config, adaptive,epipolar,do_blur,mask_cam)
         self.mlp = nn.Sequential(
             nn.Linear(config.n_embd, 4 * config.n_embd),
             nn.GELU(),  # nice
             nn.Linear(4 * config.n_embd, config.n_embd),
             nn.Dropout(config.resid_pdrop),
         )
+        self.selfremain = selfremain
 
-    def forward(self, x, p,forward_map=None,backward_map=None):
-        x = x + self.attn(self.ln1(x), p,forward_map = forward_map,backward_map = backward_map)
+    def forward(self, x,x_kv, p,forward_map=None,backward_map=None,return_attn=False):
+        out, epipolar_attn_map, attn_weight,bi_epi_ratio = self.attn(self.ln1(x),self.ln1(x_kv),p,
+                                forward_map = forward_map,
+                                backward_map = backward_map,
+                                return_attn = return_attn)
+        if self.selfremain:
+            #* epipolar cross attend
+            #* 想法是在epipolar時只做要生成image的部分, 其他維持self attend 的結果
+            #* 其實沒啥道理, 亂槍打鳥試試看
+            out[:,0:285,:] = x[:,0:285,:]
+            out[:,541:571,:] = x[:,541:571,:]
+        
+        x = x + out
         x = x + self.mlp(self.ln2(x))
-        return x
+        return x, epipolar_attn_map, attn_weight,bi_epi_ratio
     
 class Block_cross(nn.Module):
     """ an unassuming Transformer block """
@@ -390,7 +472,7 @@ class GPT(nn.Module):
     def __init__(self, vocab_size, block_size, time_len, n_layer=12, n_head=8, n_embd=256,
                  embd_pdrop=0., resid_pdrop=0., attn_pdrop=0., n_unmasked=0,
                  input_vocab_size=None,epipolar=None,do_cross=False,sep_pe = False,
-                 two_cond = False,do_blur=False):
+                 two_cond = False,do_blur=False,mask_cam=False,srcimg_pe=True,selfremain=False):
         super().__init__()
         config = GPTConfig(vocab_size=vocab_size, block_size=block_size,
                            embd_pdrop=embd_pdrop, resid_pdrop=resid_pdrop, attn_pdrop=attn_pdrop,
@@ -426,6 +508,13 @@ class GPT(nn.Module):
         # transformer 
         self.blocks = nn.ModuleList()
 
+        #* 看condition image 要不要加 positional encoding
+        self.srcimg_pe = srcimg_pe
+        print(f"src img pe = {self.srcimg_pe}")
+
+        #* 看cross attend 保留 self attend 除生成image以外的資訊的效果
+        print(f"selfremain = {selfremain}")
+
         self.epipolar = epipolar
         if self.epipolar == "":
             self.epipolar = None
@@ -433,6 +522,7 @@ class GPT(nn.Module):
         self.do_cross = do_cross
 
         print(f"do blur = {do_blur}")
+        self.onlycross = 50
         
         if do_cross==False:
 
@@ -450,9 +540,32 @@ class GPT(nn.Module):
                         else:
                             self.blocks.append(Block(config, adaptive = False,epipolar="backward"))
                         self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                elif epipolar == "small_bi":
+                    #* 用來當作對照組
+                    for _ in range(int(12)):
+                        self.blocks.append(Block(config, adaptive = False,epipolar="bidirectional",do_blur=do_blur,mask_cam=mask_cam))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                elif epipolar == "small_for":
+                    #* 用來當作對照組
+                    for _ in range(int(12)):
+                        self.blocks.append(Block(config, adaptive = False,epipolar="forward",do_blur=do_blur,mask_cam=mask_cam))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                elif epipolar == "small_bi_end":
+                    self.onlycross=28
+                    #* 主要想測試若將最後幾個layer 都變成epipolar attend 而不受self attend 影響會不會比較好
+                    for _ in range(int(14)):
+                        self.blocks.append(Block(config, adaptive = False,epipolar="bidirectional",do_blur=do_blur,mask_cam=mask_cam))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=None))
+                    for _ in range(4):
+                        self.blocks.append(Block(config, adaptive = False,epipolar="bidirectional",do_blur=do_blur,mask_cam=mask_cam))
+                elif epipolar == "small_bi_all":
+                    self.onlycross=0
+                    #* 測試若全是cross的極端情況
+                    for _ in range(int(16)):
+                        self.blocks.append(Block(config, adaptive = False,epipolar="bidirectional",do_blur=do_blur,mask_cam=mask_cam))
                 else:
                     for _ in range(int(config.n_layer // 2)):
-                        self.blocks.append(Block(config, adaptive = False,epipolar=epipolar,do_blur=do_blur))
+                        self.blocks.append(Block(config, adaptive = False,epipolar=epipolar,do_blur=do_blur,mask_cam=mask_cam,selfremain=selfremain))
                         self.blocks.append(Block(config, adaptive = False,epipolar=None))
         
         elif do_cross == True:
@@ -477,6 +590,12 @@ class GPT(nn.Module):
                 self.blocks2.append(Block_cross(config,epipolar="forward"))
                 self.blocks2.append(Block_cross(config,epipolar=None))
 
+
+        if epipolar == "small_bi" or epipolar == "small_bi_end" or epipolar == "small_bi_all":
+            self.epipolar = "bidirectional"
+        if epipolar == "small_for":
+            self.epipolar = "forward"
+            
         # decoder head
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -608,7 +727,9 @@ class GPT(nn.Module):
         vector_len = torch.norm(oi_to_pi_repeat, dim=-1, p=2)
         distance = area/vector_len
 
-        distance_weight = 1 - torch.sigmoid(50*(distance-0.5)) # 50 0.5
+        #* 50 0.5 基礎的epipolar
+        #* 5 0.75 flexible epipolar, 希望epipolar 可以多看一點
+        distance_weight = 1 - torch.sigmoid(5*(distance-0.75)) # 50 0.5
         # distance_weight = 1 - torch.sigmoid(steep*(distance-0.05*H)) # 50 0.5
 
         epipolar_map = rearrange(distance_weight,"b (hw hw2) -> b hw hw2",hw = h*w)
@@ -662,6 +783,13 @@ class GPT(nn.Module):
         #* x shape (B,827,1024)
         x = token_embeddings + role_embeddings + time_embeddings
 
+
+        #* 看condition image要不要做pe, 想法是說target point 應該更要接近原始圖片, 而不是pe 過的
+        if self.srcimg_pe:
+            origin_x = x.clone()
+        else:
+            origin_x = token_embeddings.clone()
+
         # print(f"input shape = {x.shape}")
 
         if return_layers:
@@ -700,8 +828,20 @@ class GPT(nn.Module):
         p1, p2, p3 = p
         h = self.locality(p1, p2, p3)
         # h = h.repeat(x.shape[0], 1, 1, 1)
-        for block in self.blocks:
-            x = block(x, h,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+
+        if self.epipolar!=None:
+            for i in range(len(self.blocks)):
+                if i%2==0 or (i>=self.onlycross):
+                    x,_,_,_ = self.blocks[i](x, origin_x,h,
+                                            forward_map = forward_epipolar_map,
+                                            backward_map = backward_epipolar_map)
+                else:
+                    x,_,_,_ = self.blocks[i](x, x, h,
+                                            forward_map = forward_epipolar_map,
+                                            backward_map = backward_epipolar_map)
+        else:
+            for block in self.blocks:
+                x = block(x, h,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
         
         # x = self.blocks(x)
         x = self.ln_f(x)
@@ -853,7 +993,10 @@ class GPT(nn.Module):
         # return logits, loss, logits_forward
         return logits, loss
     
-    def test(self, dc_emb, z_indices, p,forward_epipolar_map=None,backward_epipolar_map=None, embeddings=None, targets=None, return_layers=False, return_bias=False):
+    def test(self, dc_emb, z_indices, p,forward_epipolar_map=None,backward_epipolar_map=None, embeddings=None, 
+             targets=None, return_layers=False, return_bias=False,
+                return_attn = False
+             ):
         token_embeddings_dc = dc_emb
 
         # add the token embedding with z_indices
@@ -878,6 +1021,11 @@ class GPT(nn.Module):
         time_embeddings = self.time_emb[:, :t, :] # each position maps to a (learnable) vector
         
         x = token_embeddings + role_embeddings + time_embeddings
+
+        if self.srcimg_pe:
+            origin_x = x.clone()
+        else:
+            origin_x = token_embeddings.clone()
 
         #* 計算epipolar map [forward,backward,bidirectional,token_change]
         # batch = x.shape[0]
@@ -913,8 +1061,29 @@ class GPT(nn.Module):
         #* f01 shape (1,256,256)
         # for block in self.blocks:
         #     x = block(x, h)
-        for block in self.blocks:
-            x = block(x, h,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
+
+        attn_weights = []
+        epipolar_attn_maps = []
+
+        bi_epi_ratio = None
+        if self.epipolar!=None:
+            for i in range(len(self.blocks)):
+                if i%2==0 or (i>=self.onlycross):
+                    x, epipolar_attn_map,attn_weight,ratio = self.blocks[i](x, origin_x,h,
+                                            forward_map = forward_epipolar_map,
+                                            backward_map = backward_epipolar_map,
+                                            return_attn = return_attn
+                                            )
+                    attn_weights.append(attn_weight)
+                    epipolar_attn_maps.append(epipolar_attn_map)
+                    bi_epi_ratio = ratio
+                else:
+                    x,_,_,_ = self.blocks[i](x, x, h,
+                                            forward_map = forward_epipolar_map,
+                                            backward_map = backward_epipolar_map)
+        else:
+            for block in self.blocks:
+                x,_,_ = block(x,x, h,forward_map = forward_epipolar_map,backward_map = backward_epipolar_map)
             
         x = self.ln_f(x)
         logits = self.head(x)
@@ -924,6 +1093,7 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         
+        return logits,epipolar_attn_maps,attn_weights,bi_epi_ratio
         if return_bias:
             return logits, h
         else:

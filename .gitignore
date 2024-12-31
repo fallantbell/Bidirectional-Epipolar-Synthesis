@@ -3,3 +3,11 @@ pretrained_models
 saved_video
 fid_cal
 *.pyc
+bi_attn_img
+bi_epipolar_attn_img
+forward_attn_img
+forward_epipolar_attn_img
+bi_attn_test
+for_attn_test
+Siamese_folder
+*.txt

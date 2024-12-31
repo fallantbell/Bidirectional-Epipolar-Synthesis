@@ -12,6 +12,8 @@ from src.main import instantiate_from_config
 from timm.models.layers import trunc_normal_
 from timm.models.vision_transformer import Block
 
+import random
+
 class MAE_Encoder(torch.nn.Module):
     def __init__(self,
                  image_size=256,
@@ -375,7 +377,7 @@ class GeoTransformer(nn.Module):
     
     @torch.no_grad()
     def sample_latent(self, x, c, p, steps,k_ori=None,w2c=None,temperature=1.0, sample=False, top_k=None,
-               callback=lambda k: None, embeddings=None, **kwargs):
+               callback=lambda k: None, embeddings=None,show=False, **kwargs):
         # in the current variant we always use embeddings for camera
         # assert embeddings is not None
         # check n_unmasked and conditioning length
@@ -410,18 +412,28 @@ class GeoTransformer(nn.Module):
                 b12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_1)
                 backward_epipolar_map = [b01,b02,b12]
         
+        x_second = x.clone()
+        x_third = x.clone()
+
+        randk = random.randint(0, steps-1)
+        randk = 29
+        bi_epi_ratio = None
         for k in range(steps):
             callback(k)
             x_cond = x            
-            logits, _ = self.transformer.test(c, x_cond, p,
+            logits,epipolar_attn_maps, attn_weights,ratio = self.transformer.test(c, x_cond, p,
                                                 forward_epipolar_map=forward_epipolar_map,
                                                 backward_epipolar_map=backward_epipolar_map,
-                                                embeddings=embeddings)
+                                                embeddings=embeddings,return_attn = show)
+            
+            #* 最後一個token, 最後一個layer, 的所有token 對應src image的attention 正確比例
+            bi_epi_ratio = ratio
+
             #* logits shape = (1, 286、287、288... ,16384)
-            logits = logits[:, -1, :] / temperature
+            logits_last = logits[:, -1, :] / temperature
             if top_k is not None:
-                logits = self.top_k_logits(logits, top_k)
-            probs = F.softmax(logits, dim=-1)
+                logits_last = self.top_k_logits(logits_last, top_k)
+            probs = F.softmax(logits_last, dim=-1)
             
             if sample:
                 ix = torch.multinomial(probs, num_samples=1)
@@ -430,7 +442,30 @@ class GeoTransformer(nn.Module):
                 
             x = torch.cat((x, ix), dim=1)   
 
-        return x
+            if randk == k:
+                return_weights = attn_weights
+                return_attn_map = epipolar_attn_maps
+        
+        if show == False:
+            return x,bi_epi_ratio
+        
+        for k in range(256):
+            logits_second = logits[:, 285+k, :] / temperature
+            if top_k is not None:
+                logits_second = self.top_k_logits(logits_second, top_k)
+            probs = F.softmax(logits_second, dim=-1)
+            _, ix = torch.topk(probs, k=1, dim=-1)
+            x_second = torch.cat((x_second, ix), dim=1)   
+
+            if logits.shape[1] >= 572:
+                logits_third = logits[:, 571+k, :] / temperature
+                if top_k is not None:
+                    logits_third = self.top_k_logits(logits_third, top_k)
+                probs = F.softmax(logits_third, dim=-1)
+                _, ix = torch.topk(probs, k=1, dim=-1)
+                x_third = torch.cat((x_third, ix), dim=1) 
+
+        return x,return_attn_map,return_weights,randk,x_second,x_third,bi_epi_ratio
     
     @torch.no_grad()
     def sample_cross(self, prototype, z_emb,k_ori=None,w2c=None,temperature=1.0, sample=False, top_k=None,

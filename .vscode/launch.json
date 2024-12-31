@@ -42,16 +42,18 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "evaluate",
+            "name": "inference",
             "type": "debugpy",
             "request": "launch",
             "program":"./evaluation/evaluate_realestate.py",
             "args": [
-                "--len","21",
-                "--video_limit","10",
+                "--len","6",
+                "--video_limit","250",
                 "--base","realestate_16x16_sine_cview_adaptive_epipolar",
-                "--exp","exp_forward_epipolar_error",
+                "--ckpt","0",
+                "--exp","exp_fixed_bi_epipolar_maskcam_sepsoft-4_4gpu",
                 "--gpu","5",
+                "--type","bi",
             ],
             "console": "integratedTerminal"
         },

@@ -4,7 +4,7 @@ total_ssim = 0
 total_psnr = 0
 count = 0
 
-data_path = "experiments/realestate/exp_forward_epipolar_full_10kdata_error/evaluate_frame_21_video_250_ckpt_100000/"
+data_path = "experiments/realestate/exp_bidirectional_epipolar_blur_2gputest/evaluate_frame_21_video_250_ckpt_400000/"
 
 for eval in ['0','1','2','3']:
     eval_path = f"{data_path}/eval_{eval}.txt"
