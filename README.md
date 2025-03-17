@@ -1,14 +1,14 @@
 ## Installation
 - Clone the repository:
 ```
-git clone https://github.com/xrenaa/Look-Outside-Room
-cd Look-Outside-Room
+git clone https://github.com/fallantbell/Bidirectional-Epipolar-Synthesis
+cd Bidirectional-Epipolar-Synthesis
 python scripts/download_vqmodels.py
 ```
 - Dependencies:  
 ```
 conda env create -f environment.yaml
-conda activate lookout
+conda activate bi_epipolar
 pip install opencv-python ffmpeg-python matplotlib tqdm omegaconf pytorch-lightning einops importlib-resources imageio imageio-ffmpeg numpy-quaternion
 ```
 

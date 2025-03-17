@@ -1,4 +1,4 @@
-name: lookout
+name: bi_epipolar
 channels:
   - pytorch
   - defaults
