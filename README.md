@@ -49,11 +49,3 @@ python ./evaluation/evaluate_realestate.py \
 --exp exp_bidirectional_epipolar --gpu 0 \
 --type bi --mask_ratio 0.9
 ```
-
-## Credits
-
-This repo is mainly based on https://github.com/CompVis/geometry-free-view-synthesis.
-
-Data generator of Matterport 3D is based on: https://github.com/facebookresearch/synsin.
-
-Evaluation metircs are based on: https://github.com/zlai0/VideoAutoencoder.
