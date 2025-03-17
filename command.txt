@@ -11,103 +11,16 @@ main.py \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar.yaml \
 --gpu 0,1
 
-# debug 
-
-python -m torch.distributed.launch \
---nproc_per_node=2 --master_port=14902 \
-main.py \
---dataset realestate --name exp_debug \
---base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar.yaml \
---gpu 0,1
-
-# train -- for cross
-
-python -m torch.distributed.launch \
---nproc_per_node=4 --master_port=14901 \
-main.py \
---dataset realestate --name exp_bidirectional_cross_PE \
---base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml \
---len 2 --max_iter 400001 --visual-iter 10000 \
---gpu 0,1,2,3
-
-python -m torch.distributed.launch \
---nproc_per_node=4 --master_port=14903 \
-main.py \
---dataset realestate --name exp_cross_justforward \
---base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml \
---batch-size 4 \
---len 2 --max_iter 400001 --visual-iter 2500 \
---gpu 6,7,8,9
-
-# debug  -- for cross
-
-python -m torch.distributed.launch \
---nproc_per_node=2 --master_port=14902 \
-main.py \
---dataset realestate --name exp_debug \
---base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_cross.yaml \
---len 2 --max_iter 400001 --visual-iter 10000 \
---gpu 0,1
-
-exp_alternately_epipolar
-
-# finetune -- for cross
-
-python -m torch.distributed.launch \
---nproc_per_node=2 --master_port=14909 \
-error_accumulation.py \
---dataset realestate --name exp_fixed_for_epipolar_maskcam_sepsoft-3_2gpu_error \
---base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar_error.yaml \
---visual-iter 2500 --ckpt-iter 50000 \
---gpu 8,9
-
-
 
 # inference
 
 python ./evaluation/evaluate_realestate.py \
---len 21 --video_limit 250 \
+--len 6 --video_limit 253 \
 --base realestate_16x16_sine_cview_adaptive_epipolar \
 --ckpt 100000 \
---exp exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error --gpu 8 \
---type bi --mask_ratio 0.95
+--exp exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error --gpu 7 \
+--type bi --mask_ratio 0.9
 
-python ./evaluation/evaluate_realestate.py \
---len 21 --video_limit 200 \
---base realestate_16x16_sine_cview_adaptive_epipolar \
---exp exp_alternately_epipolar_error --gpu 0 \
---GT_start
-
-# inference -- for cross
-
-python ./evaluation/evaluate_realestate.py \
---len 21 --video_limit 1001 \
---base realestate_16x16_sine_cview_adaptive_epipolar_cross \
---exp exp_bidirectional_cross_justfd_old --cross \
---gpu 5 
-
-python scripts/sparse_from_realestate_format.py --txt_src ../dataset/RealEstate10K/train --img_src ../dataset/dataset/train --spa_dst ../dataset/sparse/train
-
-# recon2 是從recon 基礎上以 4gpu 4batch training
-# cross_recon 使用 2gpu 8batch 200K iter
-# recon_alldata 使用 4gpu 8batch 500K iter
-# cross_PE 是 4gpu 2batch 400K iter
-# recon_equal_sepPE 使用4gpu 4batch 400k iter (equal 指forward backward 佔比一樣)
-
-# fixed 是把原本epipolar 的self attention 改成與原本的 input 做cross attention
-# maskcam 是把epipolar attnetion 中camera token 部分的attend 強制設為0, 讓他不要干擾到predict token
-# small_bi 是把layer 從 32 -> 24 , 看減少layer 會不會訓練快很多, 然後看看效果差別
-# small_bi_end 是把 24 layer 後面四個layer 全部改成做epipolar attend
-    看在最後不受self attend 影響的效果會不會比較好
-
-# small_bi_all 是測試若全為epipolar cross attend 的效果, 看attend 效果不好是否是因為self attend 原因
-    layer 從 32->16
-
-bi 的 sepsoft3 是要用來改進原本sepsoft2 沒寫好的地方, 但是在maxcam 那邊有點寫錯
-sepsoft4 則是用來改進sepsoft3, 應該是正確的sepsoft, 等同於 for 的sepsoft3
-
-wosrcpe 代表 w/o src image position encoding, 想說target point 可能更應該跟原始的encode image 
-做attention, 而不是參雜PE 資訊的image
-
-selfremain 代表在做epipolar cross attend 時, 將除了要預測的兩張圖片以外的資訊替換成前一層 self attend
-出來的結果, 想法是盡可能保持LOR 原始作法, cross attend 就單純將src image 資訊傳給要生成的圖片就好
+251 只看前一張，不看兩張
+252 只看前一張 + siamese 把前兩個當src img
+253 只看前一張，第 2,4 張不做siamese

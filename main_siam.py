@@ -26,18 +26,7 @@ from SiamMae import *
 from train_siam import *
 # from utils import *
 
-# Data loading
-
-# Change it in your branch !
 root_path = '...'
-
-# transforms = v2.Compose([
-#     v2.Resize(size=(224,224), antialias=True),
-#     v2.Lambda(lambd=lambda x: x/255.0)
-# ])
-
-# train_data = UCF101FullVideo(root=root_path, output_format="TCHW",transform=transforms)
-# train_loader = DataLoader(train_data, 32, shuffle=True, collate_fn=custom_collate, pin_memory=True, num_workers=6)
 
 from src.data.realestate.re10k_dataset import Re10k_dataset
 dataset = Re10k_dataset(data_root="../dataset",mode="train")
@@ -60,5 +49,5 @@ model = nn.DataParallel(model).to(device)
 folder_logs = 'Siamese_folder/logs.txt'
 folder_model = 'Siamese_folder'
 
-num_epochs = 500
+num_epochs = 1000
 model = train(model, train_loader, folder_logs, folder_model, num_epochs=num_epochs, lr=1e-4)

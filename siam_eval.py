@@ -14,6 +14,7 @@ import argparse
 
 import torch
 import torchvision
+from torchsummary import summary
 
 from SiamMae import *
 
@@ -39,7 +40,7 @@ def normalize_numpy(array):
 
 parser = argparse.ArgumentParser(description="training codes")
 parser.add_argument("--len", type=int, default=4, help="len of prediction")
-parser.add_argument('--gpu', default= '4', type=str)
+parser.add_argument('--gpu', default= '0', type=str)
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
@@ -58,9 +59,11 @@ test_loader_abs = torch.utils.data.DataLoader(
 model_path = 'Siamese_folder/mask095_epoch_170.pt'
 model = sim_mae_vit_small_patch8_dec512d8b()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# summary(model, input_size=(3,4,256, 256))
 model = nn.DataParallel(model).to(device)
 model.load_state_dict(torch.load(model_path))
 model.eval()
+summary(model, input_size=(3,4,256, 256))
 
 target_folder = f"Siamese_folder/result"
 os.makedirs(target_folder, exist_ok=True)

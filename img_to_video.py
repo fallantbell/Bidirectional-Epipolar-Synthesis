@@ -18,11 +18,8 @@ def write_video(type,video_num):
         type = "exp_forward_epipolar_error"
 
     # 資料夾路徑
-    if type == 'exp_fixed_bi_epipolar_maskcam_sepsoft-4_4gpu':
-        folder_path = f'experiments/realestate/{type}/evaluate_frame_6_video_250_ckpt_200000/{video_num}'
-    else:
-        folder_path = f'experiments/realestate/{type}/evaluate_frame_21_video_1000_ckpt_100000/{video_num}'
 
+    folder_path = f'experiments/realestate/{type}/evaluate_frame_6_video_251_ckpt_100000_mask0.900000/{video_num}'
     # 影片儲存路徑及檔名
     os.makedirs(f'saved_video/{video_num}',exist_ok=True)
     output_video = f'saved_video/{video_num}/{type}.mp4'
@@ -30,6 +27,7 @@ def write_video(type,video_num):
     # 取得資料夾內所有圖片的檔案名稱
     image_files = sorted([f for f in os.listdir(folder_path) if f[:2]!='gt'], key=custom_sort)
 
+    # true_type = "gt"
     if true_type=="gt":
         output_video = f'saved_video/{video_num}/GT.mp4'
         image_files = sorted([f for f in os.listdir(folder_path) if f[:2]=='gt'], key=custom_sort)
@@ -42,7 +40,7 @@ def write_video(type,video_num):
 
     # 設定影片編碼器、FPS、影片大小
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    fps = 5 # 5
+    fps = 2 # 5
     video_writer = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
     # 逐一讀取圖片並寫入影片
@@ -52,7 +50,7 @@ def write_video(type,video_num):
         image = cv2.imread(image_path)
         video_writer.write(image)
         cnt +=1
-        if cnt >=20:
+        if cnt >=5:
             break 
 
     # 釋放影片寫入器
@@ -64,8 +62,9 @@ if __name__ == '__main__':
 
     model_type = [
         'exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error',
+        # 'exp_base_error'
                   ]
-    video_num = "005"
+    video_num = "036-mix10-mask0.9"
 
     for type in model_type:
         write_video(type,video_num)

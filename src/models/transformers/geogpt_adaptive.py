@@ -186,9 +186,6 @@ class GeoTransformer(nn.Module):
     def forward(self, batch):
         # get time
         B, time_len = batch["rgbs"].shape[0], batch["rgbs"].shape[2]
-
-        if self.do_cross==True:
-            time_len = 2
         
         # create dict
         example = dict()
@@ -202,7 +199,10 @@ class GeoTransformer(nn.Module):
         
         for t in range(0, time_len-1): 
             _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...]) #* VQVAE encode image 成字典index
-            c_emb = self.transformer.tok_emb(c_indices) #* 將 字典indices encode 成 1024 channel, 16384->1024
+            #* 將 字典indices encode 成 1024 channel
+            #* 字典index 有16384個, 每個不同index 都會mapping 到不同的 1024 dimension
+            #* (B,256) -> (B,256,1024)
+            c_emb = self.transformer.tok_emb(c_indices) 
             conditions.append(c_emb)
 
             #* c_indice shape = (B,256), 字典index
@@ -215,6 +215,8 @@ class GeoTransformer(nn.Module):
                 example["R_rel"] = batch["R_01"]
                 example["t_rel"] = batch["t_01"]
                 #* encode camera 參數 (30個) encode成1024 channel
+                #* R(3x3) t(3x1) K(3x3) K-inv(3x3)
+                #* (B,30,1) -> nn.linear -> (B,30,1024)
                 #* (B,30,1024)
                 embeddings_warp = self.encode_to_e(example) 
                 #* 單純將camera 參數concat, (B,30)
@@ -236,41 +238,6 @@ class GeoTransformer(nn.Module):
         conditions.append(c_emb)
         gts.append(c_indices)
 
-
-        #* ------------------------------------------------------------------------
-        #* two condition 專用
-
-        two_conditions = []
-        if self.two_cond == True:
-            time_len = 3
-            gts = []
-            for t in range(0, time_len-1): 
-                _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...])
-                c_emb = self.transformer.tok_emb(c_indices)
-                two_conditions.append(c_emb)
-
-                if t == 0:
-                    example["R_rel"] = batch["R_02"]
-                    example["t_rel"] = batch["t_02"]
-                    embeddings_warp = self.encode_to_e(example)
-                    two_conditions.append(embeddings_warp)
-                if t == 1:
-                    example["R_rel"] = batch["R_12"]
-                    example["t_rel"] = batch["t_12"]
-                    embeddings_warp = self.encode_to_e(example)
-                    two_conditions.append(embeddings_warp)
-                if t > 0:
-                    gts.append(c_indices)
-
-            #! 這裡沒注意到 two cond 的GT 應該要是 rgb2 而不是原本的 rgb1, time_len 有改
-            _, c_indices = self.encode_to_c(batch["rgbs"][:, :, time_len-1, ...]) # final frame
-            c_emb = self.transformer.tok_emb(c_indices)
-            conditions.append(c_emb)
-            gts.append(c_indices)
-
-            two_conditions = torch.cat(two_conditions,1)
-        #* ------------------------------------------------------------------------
-
         
         #* condition = [rgb1_emb,cam01_emb,rgb2_emb,cam12_emb,rgb3_emb]
         conditions = torch.cat(conditions, 1) # B, L, 1024
@@ -281,55 +248,21 @@ class GeoTransformer(nn.Module):
         example["R_rel"] = batch["R_12"]
         example["t_rel"] = batch["t_12"]
         p.append(self.encode_to_p(example))
-
-        if self.do_cross==False:
         
-            #* logits shape = (B,827,16384)
-            logits, _ = self.transformer.iter_forward(prototype, z_emb, p = p,k=batch["K_ori"],w2c=batch['w2c_seq'])
-            #* logits shape = (B,542,16384)
-            #* 542 = 256+30+256
-            logits = logits[:, prototype.shape[1]-1:] 
-            
-            for t in range(0, time_len-2):
-                forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二個rgb 字典機率
-            
-            forecasts.append(logits[:, -256::, :]) # final frame    #* 預測的第三個rgb 字典機率
-            
-            loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
-            
-            return forecasts, gts, loss, log_dict
+        #* logits shape = (B,827,16384)
+        logits, _ = self.transformer.iter_forward(prototype, z_emb, p = p,k=batch["K_ori"],w2c=batch['w2c_seq'])
+        #* logits shape = (B,542,16384)
+        #* 542 = 256+30+256
+        logits = logits[:, prototype.shape[1]-1:] 
         
-        elif self.do_cross==True:
-            # src_emb = self.encoder(batch["rgbs"][:, :, 0, ...])
-
-            # logits, _, logits_forward = self.transformer.cross_forward(prototype, z_emb[:,:0],k=batch["K_ori"],w2c=batch['w2c_seq'])
-            
-            if self.two_cond==False:
-                #* 原本的作法是根據 rgb0 rgb1 和 cam01 預測 rgb1
-                logits, _ = self.transformer.cross_forward(prototype,k=batch["K_ori"],w2c=batch['w2c_seq'])
-            elif self.two_cond==True:  
-                #* two cond 的作法是根據 rgb0 rgb1 rgb2 和 cam02 cam12 預測 rgb2
-                #* 所以 GT 會不一樣
-                logits, _ = self.transformer.cross_forward(rgb1_emb = two_conditions[:,286:,:],
-                                                           rgb0_emb = two_conditions[:,0:286,:],
-                                                           k=batch["K_ori"],w2c=batch['w2c_seq']) 
-                
-                forecasts.append(logits[:, 0:256, :]) #* 為了符合顯示結果多塞一個gt, 並不參與loss
-
-            forecasts.append(logits[:, 0:256, :])
-
-            forec = torch.cat(forecasts, 0)
-            gt = torch.cat(gts, 0)
-
-            loss, log_dict = self.compute_loss(forec[:,-256:],gt[:,-256:], split="train")
-
-            # forecasts_forward = []
-            # forecasts_forward.append(logits_forward[:, 0:256, :])
-            # forec_forward = torch.cat(forecasts_forward, 0)
-            # loss_forward, log_dict_forward = self.compute_loss(forec_forward[:,:256],gt[:,:256], split="train_forward")
-
-            # return forecasts, gts, loss, loss_forward, forecasts_forward
-            return forecasts, gts, loss, log_dict
+        for t in range(0, time_len-2):
+            forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二個rgb 字典機率
+        
+        forecasts.append(logits[:, -256::, :]) # final frame    #* 預測的第三個rgb 字典機率
+        
+        loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
+        
+        return forecasts, gts, loss, log_dict
 
 
     def top_k_logits(self, logits, k):
@@ -393,35 +326,39 @@ class GeoTransformer(nn.Module):
         forward_epipolar_map = None
         backward_epipolar_map = None
         if self.epipolar!=None:
-            if self.epipolar == 'forward' or self.epipolar == 'bidirectional' or self.epipolar == 'token_change' or self.epipolar == "alternately":
+            if self.epipolar == 'forward' or self.epipolar == 'bidirectional':
                 
                 w2c_0 = w2c[:,0]
                 w2c_1 = w2c[:,1]
-                w2c_2 = w2c[:,2]
+                # w2c_2 = w2c[:,2]
                 f01 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_1)
-                f02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_2)
-                f12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_2)
+                f02 = f01.clone()
+                f12 = f01.clone()
+                # f02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_2)
+                # f12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_2)
                 forward_epipolar_map = [f01,f02,f12]
-            if self.epipolar == 'backward' or self.epipolar == 'bidirectional' or self.epipolar == 'token_change' or self.epipolar == "alternately":
+            if self.epipolar == 'backward' or self.epipolar == 'bidirectional':
                 # forward_epipolar_map = get_epipolar_tensor(1,h,h,k2.clone(),prev_w2c,now_w2c)
                 w2c_0 = w2c[:,0]
                 w2c_1 = w2c[:,1]
-                w2c_2 = w2c[:,2]
+                # w2c_2 = w2c[:,2]
                 b01 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_0)
-                b02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_0)
-                b12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_1)
+                b02 = b01.clone()
+                b12 = b01.clone()
+                # b02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_0)
+                # b12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_1)
                 backward_epipolar_map = [b01,b02,b12]
         
         x_second = x.clone()
         x_third = x.clone()
 
         randk = random.randint(0, steps-1)
-        randk = 29
+        randk = 88
         bi_epi_ratio = None
         for k in range(steps):
             callback(k)
             x_cond = x            
-            logits,epipolar_attn_maps, attn_weights,ratio = self.transformer.test(c, x_cond, p,
+            logits,epipolar_attn_maps, attn_weights, attn_weights_for,ratio = self.transformer.test(c, x_cond, p,
                                                 forward_epipolar_map=forward_epipolar_map,
                                                 backward_epipolar_map=backward_epipolar_map,
                                                 embeddings=embeddings,return_attn = show)
@@ -444,6 +381,7 @@ class GeoTransformer(nn.Module):
 
             if randk == k:
                 return_weights = attn_weights
+                return_weights_for = attn_weights_for
                 return_attn_map = epipolar_attn_maps
         
         if show == False:
@@ -465,22 +403,7 @@ class GeoTransformer(nn.Module):
                 _, ix = torch.topk(probs, k=1, dim=-1)
                 x_third = torch.cat((x_third, ix), dim=1) 
 
-        return x,return_attn_map,return_weights,randk,x_second,x_third,bi_epi_ratio
-    
-    @torch.no_grad()
-    def sample_cross(self, prototype, z_emb,k_ori=None,w2c=None,temperature=1.0, sample=False, top_k=None,
-               callback=lambda k: None, embeddings=None, **kwargs):
-        assert not self.transformer.training
-
-        logits, _ = self.transformer.cross_forward(prototype,k=k_ori.clone(),w2c=w2c)
-
-        if top_k is not None:
-            logits = self.top_k_logits(logits, top_k)
-        probs = F.softmax(logits, dim=-1)
-
-        _, sample = torch.topk(probs, k=1, dim=-1)
-
-        return sample[:,:256]
+        return x,return_attn_map,return_weights,return_weights_for,randk,x_second,x_third,f12[0,randk],b12[0,randk],bi_epi_ratio
 
     @torch.no_grad()
     def sample(self, x, c, steps, temperature=1.0, sample=False, top_k=None,

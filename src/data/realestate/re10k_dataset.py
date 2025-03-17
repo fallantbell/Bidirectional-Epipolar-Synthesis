@@ -249,8 +249,6 @@ class Re10k_dataset(Dataset):
             img = img.resize((self.W,self.H), resample=Image.LANCZOS)
             img = self.crop_image(img)      #* (256,256)
 
-            # img_tensor = self.transform(img)
-            # img_tensor = img_tensor*2 - 1
             image_seq.append(np.array(img))
             cnt += 1
         
@@ -315,11 +313,6 @@ class Re10k_dataset(Dataset):
         if self.mode == "test":      #* 做 inference 取 infer_len 張圖片，用來做比較
             frame_idxs = np.arange(self.infer_len)
 
-        # for idx in frame_idxs:
-        #     c2w = np.array(frame_list[idx][7:], dtype=float).reshape(3,4)
-        #     c2w_4x4 = np.eye(4)
-        #     c2w_4x4[:3,:] = c2w
-        #     c2w_seq.append(torch.tensor(c2w_4x4))
         
         f_idx = 0
         for idx in range(len(frame_list)):
@@ -336,10 +329,6 @@ class Re10k_dataset(Dataset):
             f_idx+=1
             if f_idx == len(frame_idxs):
                 break
-
-        # w2c_seq = torch.stack(w2c_seq)
-
-        # intrinsics = torch.from_numpy(intrinsics)
 
         return intrinsics, w2c_seq , intrinsics_ori
     
@@ -368,23 +357,11 @@ class Re10k_dataset(Dataset):
         #* video frame 數量 < max interval 
         #* 或 < inference 的長度
         if good_video == False:
-            # print(f"false")
             return self.__getitem__(index+1)
 
         intrinsics,w2c,intrinsics_ori = self.get_information(index,frame_idx,interval_len,frame_namelist)
 
-        # infer_result = {
-        #     'img':img,
-        #     'intrinsics':intrinsics,
-        #     'c2w': c2w
-        # }
 
-        # result = {
-        #     'img':img,
-        #     'src_img': src_img_tensor,
-        #     'intrinsics':intrinsics,
-        #     'c2w': c2w
-        # }
 
         K = intrinsics
         K_ori = intrinsics_ori

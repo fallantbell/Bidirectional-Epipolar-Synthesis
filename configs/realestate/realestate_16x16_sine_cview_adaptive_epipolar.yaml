@@ -3,9 +3,7 @@ model:
   target: src.models.transformers.geogpt_adaptive.GeoTransformer
   params:
     use_depth: False # depth is not provided to transformer but only used to rescale t
-    epipolar: "bidirectional" #* forward, bidirectional, alternately
-    # ckpt_path: "experiments/realestate/exp_fixed_small_bi_epipolar_maskcam_2gpu/model/400000.ckpt"
-
+    epipolar: "bidirectional" #* forward, bidirectional
     use_scheduler: True
     scheduler_config:
       target: src.lr_scheduler.LambdaWarmUpCosineScheduler
@@ -27,11 +25,9 @@ model:
         n_layer: 32
         n_head: 16
         n_embd: 1024
-        epipolar: "bidirectional" #* forward, bidirectional, alternately , small_bi,small_bi_end,small_for
+        epipolar: "bidirectional" #* forward, bidirectional
         do_blur: False
         mask_cam: True
-        srcimg_pe: True    #* 原先是true
-        selfremain: False   #* 原先是false
 
     first_stage_key:
       x: "dst_img"
