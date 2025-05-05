@@ -140,11 +140,9 @@ if __name__ == '__main__':
 
     # load data
     if args.dataset == "realestate":
-        # from src.data.realestate.realestate_cview import VideoDataset
         from src.data.realestate.re10k_dataset import Re10k_dataset
         sparse_dir = "%s/sparse/" % args.data_path
         image_dir = "%s/dataset/" % args.data_path
-        # dataset = VideoDataset(sparse_dir = sparse_dir, image_dir = image_dir, length = time_len, low = 3, high = 20)
         dataset = Re10k_dataset(data_root="../dataset",mode="train")
     elif args.dataset == "mp3d":
         from src.data.mp3d.mp3d_cview import VideoDataset
@@ -180,8 +178,6 @@ if __name__ == '__main__':
             batch[key] = batch[key].cuda()
         
         forecasts, gts, loss, log_dict = module(batch)
-        # forecasts, gts, loss_all, loss_forward, forecasts_forward = module(batch)
-        # loss = loss_all + loss_forward
 
         optimizer.zero_grad()
         loss.backward()
@@ -190,8 +186,6 @@ if __name__ == '__main__':
 
         # update tensorboard
         summary.add_scalar(tag='loss', scalar_value=loss.mean().item(), global_step=idx)
-        # summary.add_scalar(tag='loss_forward', scalar_value=loss_forward.mean().item(), global_step=idx)
-        # summary.add_scalar(tag='loss_all', scalar_value=loss_all.mean().item(), global_step=idx)
         
         if get_rank() == 0:
             pbar.set_description((f"loss: {loss:.4f};"))
@@ -199,6 +193,7 @@ if __name__ == '__main__':
             if idx % args.ckpt_iter == 0:
                 torch.save(module.state_dict(), os.path.join(save_dir, f"{idx}.ckpt"))
 
+        # visualization
         if idx % args.visual_iter == 0:
             if get_rank() == 0:
                 gt_clip = batch["rgbs"][0][:,:time_len].permute(1,0,2,3)
@@ -230,21 +225,7 @@ if __name__ == '__main__':
                 pred_clip = vutils.make_grid(torch.cat(pred_clip, 0))
                 pred_clip = (pred_clip + 1)/2
 
-                #* predict_forward
-                # predict_1_f = batch["rgbs"][0:1, :, 0].cuda()
-                # pred_clip_f = [predict_1_f]
-                
-                # with torch.no_grad():
-                #     for i in range(time_len - 1):
-                #         predict = torch.argmax(forecasts_forward[i], 2)[0]
-                #         predict = module.decode_to_img(predict, [1, 256, 16,16])
-                #         pred_clip_f.append(predict)
-
-                # pred_clip_f = vutils.make_grid(torch.cat(pred_clip_f, 0))
-                # pred_clip_f = (pred_clip_f + 1)/2
-
                 merge = torch.cat([gt_clip.cpu(), recon_clip.cpu(), pred_clip.cpu()], 1).clamp(0,1)
-                # merge = torch.cat([gt_clip.cpu(), recon_clip.cpu(), pred_clip_f.cpu(), pred_clip.cpu()], 1).clamp(0,1)
                 plt.imsave(os.path.join(visual_dir, "%06d.png" % idx), merge.permute(1,2,0).numpy())
 
                 dist.barrier()

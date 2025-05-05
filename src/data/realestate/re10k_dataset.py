@@ -67,9 +67,9 @@ class ToTensorVideo:
         """
         return to_tensor(clip)
 
-    def __repr__(self) -> str:
-        return self.__class__.__name__
-    
+    # def __repr__(self) -> str:
+    #     return self.__class__.__name__
+
 class NormalizeVideo:
     """
     Normalize the video clip by mean subtraction and division by standard deviation
@@ -148,26 +148,8 @@ class Re10k_dataset(Dataset):
         H = 256
         W = 455
 
-        #* 128 x 128 縮放版本
-        # H = 128
-        # W = 228
-
-        #* 64 x 64 縮放版本
-        # H = 64
-        # W = 114
-
-        # H = 32
-        # W = 57
-
-        # H = 16
-        # W = 28
-
         self.H = H
         self.W = W
-
-        if do_latent:
-            self.H = 512
-            self.W = 512
 
         self.square_crop = True     #* 是否有做 center crop 
 
@@ -179,6 +161,7 @@ class Re10k_dataset(Dataset):
         self.xscale = xscale
         self.yscale = yscale
 
+        #* 取10000 video 做training
         num = 0
         for video_dir in sorted(os.listdir(self.image_root)):
             self.video_dirs.append(video_dir)
@@ -216,23 +199,19 @@ class Re10k_dataset(Dataset):
         if self.mode=="test" and len(frame_namelist) < self.infer_len:   #* inference 時影片長度小於要生成的長度
             return None, None, None, None, False
 
-
-        #* 隨機取間距
-        # interval_len = np.random.randint(self.max_interval) + 1
-        #! lor 的設定
+        #* 圖片張數
         if self.mode=="train":
             interval_len = 3
         if self.mode=="finetune":
             interval_len = 5
         if self.mode=="test":
-            interval_len = 4
+            interval_len = 20
 
         #* 隨機取origin frame
         frame_idx = np.random.randint(len(frame_namelist)-interval_len)
 
+        #* 取得圖片
         image_seq = []
-        # frame_idxs = [frame_idx, frame_idx+interval_len]  #* 兩張圖片, 一個origin 一個target
-        #! lor 的設定
         if self.mode=="train":
             frame_idxs = [frame_idx, frame_idx+1,frame_idx+2]
         if self.mode=="finetune":
@@ -240,11 +219,11 @@ class Re10k_dataset(Dataset):
         if self.mode == "test":     #* 做 inference 取 infer_len 張圖片，用來做比較
             frame_idxs = np.arange(self.infer_len)
 
+        #* resize 並center crop 到256x256
         cnt = 0
         for idx in frame_idxs:
             frame_name = frame_namelist[idx]
             img_np = npz_file[frame_name]
-            # print(f"img ori shape:{img_np.shape}")
             img = Image.fromarray(img_np)
             img = img.resize((self.W,self.H), resample=Image.LANCZOS)
             img = self.crop_image(img)      #* (256,256)
@@ -252,7 +231,6 @@ class Re10k_dataset(Dataset):
             image_seq.append(np.array(img))
             cnt += 1
         
-        # image_seq = torch.stack(image_seq)
         image_seq = torch.from_numpy(np.stack(image_seq))
         image_seq = self.transform(image_seq)
 
@@ -277,14 +255,9 @@ class Re10k_dataset(Dataset):
                 frame_informlist = line.split()
                 frame_list.append(frame_informlist)
 
-        #* 同一個video 的intrinsic 都一樣
+        #* 讀取圖片的 intrinsic 
         fx,fy,cx,cy = np.array(frame_list[0][1:5], dtype=float)
 
-
-        # intrinsics = np.array([ [fx,0,cx,0],
-        #                         [0,fy,cy,0],
-        #                         [0,0,1,0],
-        #                         [0,0,0,1]])
         intrinsics = np.array([ [fx,0,cx],
                                 [0,fy,cy],
                                 [0,0,1]])
@@ -303,8 +276,6 @@ class Re10k_dataset(Dataset):
             intrinsics[1, 2] = intrinsics[1, 2] / self.yscale
 
         w2c_seq = []
-        # frame_idxs = [frame_idx, frame_idx+interval_len]
-        #! lor 的設定
         if self.mode == "train":
             frame_idxs = [frame_idx, frame_idx+1, frame_idx+2]
         if self.mode == "finetune":
@@ -313,7 +284,7 @@ class Re10k_dataset(Dataset):
         if self.mode == "test":      #* 做 inference 取 infer_len 張圖片，用來做比較
             frame_idxs = np.arange(self.infer_len)
 
-        
+        #* 讀取每張圖片的camera extrinsic
         f_idx = 0
         for idx in range(len(frame_list)):
             #* 根據timestamp 與圖片檔名配對，找到對應的extrinsic
@@ -323,7 +294,6 @@ class Re10k_dataset(Dataset):
             w2c = np.array(frame_list[idx][7:], dtype=float).reshape(3,4)
             w2c_4x4 = np.eye(4)
             w2c_4x4[:3,:] = w2c
-            # w2c_seq.append(torch.tensor(w2c_4x4))
             w2c_seq.append(w2c_4x4)
 
             f_idx+=1
@@ -361,8 +331,6 @@ class Re10k_dataset(Dataset):
 
         intrinsics,w2c,intrinsics_ori = self.get_information(index,frame_idx,interval_len,frame_namelist)
 
-
-
         K = intrinsics
         K_ori = intrinsics_ori
         K_inv = np.linalg.inv(K)
@@ -390,6 +358,7 @@ class Re10k_dataset(Dataset):
             w2c_tensor.append(torch.tensor(w2c[i]))
         w2c_tensor = torch.stack(w2c_tensor)
 
+        #* training 回傳
         example = {
             "rgbs": img,
             "src_points": np.zeros((1,3), dtype=np.float32),
@@ -411,6 +380,7 @@ class Re10k_dataset(Dataset):
             Rs.append(w2c[i][:3,:3])
             ts.append(w2c[i][:3,3])
         
+        #* finetune 回傳
         example_finetune = {
             "rgbs": img,
             "src_points": np.zeros((1,3), dtype=np.float32),
@@ -422,7 +392,7 @@ class Re10k_dataset(Dataset):
             "w2c_seq": w2c_tensor,
         }
 
-
+        #* testing 回傳
         example_test = {
             "rgbs": img,
             "src_points": np.zeros((1,3), dtype=np.float32),
@@ -461,11 +431,3 @@ if __name__ == '__main__':
     #     image = rearrange(image,"C H W -> H W C")
     #     image = Image.fromarray(image)
     #     image.save(f"../test_folder/test_{i}.png")
-
-'''
-    testing
-    posed guide diffusion 使用 data
-
-    0 , 20 ...
-
-'''

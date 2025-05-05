@@ -53,13 +53,6 @@ parser.add_argument("--type",type=str, default='forward')
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-# fix the seed
-# torch.manual_seed(args.seed)
-# torch.cuda.manual_seed(args.seed)
-# torch.cuda.manual_seed_all(args.seed)
-# np.random.seed(args.seed)
-# random.seed(args.seed)
-
 # config
 config_path = "./configs/realestate/%s.yaml" % args.base
 cpt_path = "./experiments/realestate/%s/model/%s.ckpt" % (args.exp, args.ckpt)
@@ -122,7 +115,7 @@ model.load_state_dict(torch.load(cpt_path))
 model.eval()
 
 #* load siamese model
-siamese_model_path = 'Siamese_folder/mask095_fulldata_epoch_42.pt'
+siamese_model_path = 'Siamese_folder/mask095_fulldata.pt'
 siamese_model = sim_mae_vit_small_patch8_dec512d8b()
 siamese_model = nn.DataParallel(siamese_model).to("cuda")
 siamese_model.load_state_dict(torch.load(siamese_model_path))
@@ -133,7 +126,6 @@ siamese_model.eval()
 from src.data.realestate.re10k_dataset import Re10k_dataset
 sparse_dir = "%s/sparse/" % args.data_path
 image_dir = "%s/dataset/" % args.data_path
-# dataset_abs = VideoDataset(sparse_dir = sparse_dir, image_dir = image_dir, length = args.len, low = args.gap, high = args.gap, split = "test")
 dataset_abs = Re10k_dataset(data_root="../dataset",mode="test",infer_len=args.len)
 
 test_loader_abs = torch.utils.data.DataLoader(
@@ -189,6 +181,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
             example["K"] = batch["K"]
             example["K_inv"] = batch["K_inv"]
 
+            #* 讀取新的src img, image encoding
             example["src_img"] = video_clips[-1]
             _, c_indices = temp_model.encode_to_c(example["src_img"])
             c_emb = temp_model.transformer.tok_emb(c_indices)
@@ -197,20 +190,24 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
             R_dst = batch["R_s"][0, i+1, ...]
             t_dst = batch["t_s"][0, i+1, ...]
 
+            #* 計算前兩張image 的relative camera
             R_rel = R_dst@R_src_inv
             t_rel = t_dst-R_rel@t_src
 
             example["R_rel"] = R_rel.unsqueeze(0)
             example["t_rel"] = t_rel.unsqueeze(0)
 
+            #* camera encoding
             embeddings_warp = temp_model.encode_to_e(example)
             conditions.append(embeddings_warp)
-            # p1
+
+            # p1 不重要
             p1 = temp_model.encode_to_p(example)
 
-            prototype = torch.cat(conditions, 1) #* (1,286,1024) rgb1+camera 的embed
+            prototype = torch.cat(conditions, 1) #* (1,286,1024) img0+cam01 
             z_start_indices = c_indices[:, :0]
 
+            #* 生成圖片與每個token 對應的epipolar ratio
             index_sample,bi_epi_ratio = temp_model.sample_latent(z_start_indices, prototype, [p1, None, None],
                                         steps=c_indices.shape[1],
                                         k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+3,...],
@@ -232,7 +229,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 for k in range(32):
                     masked_token[j][k] = 1/bi_epi_ratio[0,(j//2)*16+(k//2)]
             masked_token = rearrange(masked_token,'h w -> (h w)')
-
+            #* 從小到大排序, 數字越小代表生成的越好, 需要保留
             sorted_indices = torch.argsort(masked_token)
             small_index = sorted_indices[:int(1024*0.5)]
 
@@ -242,21 +239,20 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
 
             if siamese==True:
                 for k in range(5):
-                    # #* 拿src img 和 最新predict 的image 去做 siamese 
+                    #* 拿src img 和 最新predict 的image 去做 siamese 
                     pred_images = []
                     for j in range(args.mix_frame):
 
                         #* 將保留的token 進行拆分分別做recon，以免每次都算到一樣的
                         sliced_mask_token = masked_token.clone()
                         shuffled_tensor = small_index[torch.randperm(small_index.size(0))]
+                        #* 0代表要保留不做mask 的區塊
                         for l in range(int(1024*(1-args.mask_ratio))):
                             sliced_mask_token[0,shuffled_tensor[l]]=0
 
                         #* data shape (b c t h w) (1 3 2 256 256)
-                        # if i == 0:
                         siamese_data = torch.stack([video_clips[-2],video_clips[-1]],dim=2)
-                        # else:
-                        #     siamese_data = torch.stack([video_clips[-3],video_clips[-1]],dim=2)
+                        #* 將mask 區域進行reconstruct
                         loss, pred = siamese_model.forward(siamese_data,mask_ratio=args.mask_ratio,mask_example=sliced_mask_token)
                         pred_image = siamese_model.module.unpatchify(pred)
                         pred_images.append(pred_image)
@@ -267,10 +263,6 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                     for j in range(1,args.mix_frame):
                         pred_image += pred_images[j]
                     pred_image/=args.mix_frame
-                    
-                    # current_im = as_png(pred_image.permute(0,2,3,1)[0])
-                    # current_im.save(f'{ckpt_test_folder}/mask_recon_{k}.png')
-                    # print(f"save recon {k} ...")
 
                     #* 替換最後結果
                     video_clips[-1] = pred_image
@@ -283,6 +275,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
         for i in range(0, total_time_len-2, time_len):
             conditions = []
 
+            #* cam 0
             R_src = batch["R_s"][0, i, ...]
             R_src_inv = R_src.transpose(-1,-2)
             t_src = batch["t_s"][0, i, ...]
@@ -295,6 +288,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
             example["K_inv"] = batch["K_inv"]
 
             for t in range(time_len):
+                #* 取得新的img0 並encode
                 example["src_img"] = video_clips[-2]
                 _, c_indices = temp_model.encode_to_c(example["src_img"])
                 c_emb = temp_model.transformer.tok_emb(c_indices)
@@ -303,17 +297,18 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 R_dst = batch["R_s"][0, i+t+1, ...]
                 t_dst = batch["t_s"][0, i+t+1, ...]
 
+                #* 計算img01 之間的relative camera
                 R_rel = R_dst@R_src_inv
                 t_rel = t_dst-R_rel@t_src
 
                 example["R_rel"] = R_rel.unsqueeze(0)
                 example["t_rel"] = t_rel.unsqueeze(0)
-                # print(f"data device = {R_rel.device}")
                 embeddings_warp = temp_model.encode_to_e(example)
                 conditions.append(embeddings_warp)
-                # p1
+                # p1 不重要
                 p1 = temp_model.encode_to_p(example)
 
+                #* 取得新的img1 並encode
                 example["src_img"] = video_clips[-1]
                 _, c_indices = temp_model.encode_to_c(example["src_img"])
                 c_emb = temp_model.transformer.tok_emb(c_indices)
@@ -322,6 +317,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 R_dst = batch["R_s"][0, i+t+2, ...]
                 t_dst = batch["t_s"][0, i+t+2, ...]
 
+                #* 計算img02 之間的relative camera
                 R_rel = R_dst@R_src_inv
                 t_rel = t_dst-R_rel@t_src
 
@@ -329,19 +325,22 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                 example["t_rel"] = t_rel.unsqueeze(0)
                 embeddings_warp = temp_model.encode_to_e(example)
                 conditions.append(embeddings_warp)
-                # p2
+                # p2 不重要
                 p2 = temp_model.encode_to_p(example)
-                # p3
+                
                 R_rel, t_rel = compute_camera_pose(batch["R_s"][0, i+t+2, ...], batch["t_s"][0, i+t+2, ...], 
                                                    batch["R_s"][0, i+t+1, ...], batch["t_s"][0, i+t+1, ...])
                 example["R_rel"] = R_rel.unsqueeze(0)
                 example["t_rel"] = t_rel.unsqueeze(0)
+                # p3 不重要
                 p3 = temp_model.encode_to_p(example)
 
+                #* img0 + cam01 + img1 + cam02
                 prototype = torch.cat(conditions, 1)
 
                 z_start_indices = c_indices[:, :0]
 
+                #* 生成圖片與每個token 對應的epipolar ratio
                 index_sample,bi_epi_ratio = temp_model.sample_latent(z_start_indices, prototype, [p1, p2, p3],
                                         steps=c_indices.shape[1],
                                         k_ori=batch["K_ori"],w2c=batch['w2c_seq'][:,i:i+3,...],
@@ -364,10 +363,10 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                     for k in range(32):
                         masked_token[j][k] = 1/bi_epi_ratio[0,(j//2)*16+(k//2)]
                 masked_token = rearrange(masked_token,'h w -> (h w)')
+                #* 從小到大排序, 數字越小代表生成的越好, 需要保留
                 sorted_indices = torch.argsort(masked_token)
                 small_index = sorted_indices[:int(1024*0.5)]
                 masked_token = masked_token.unsqueeze(0)
-                # masked_token = None
 
         #! siamese 
                 if siamese==True:       
@@ -376,7 +375,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                     print(f"do siamese for frame {len(video_clips)-1}...")
 
                     #* 拿src img 和 最新predict 的image 去做 siamese 
-                    for k in range(3):
+                    for k in range(5):
                         pred_images = []
                         for j in range(args.mix_frame):
 
@@ -388,6 +387,7 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
 
                             #* data shape (b c t h w) (1 3 2 256 256)
                             siamese_data = torch.stack([video_clips[-2],video_clips[-1]],dim=2)
+                            #* 將mask 區域進行reconstruct
                             loss, pred = siamese_model.forward(siamese_data,mask_ratio=args.mask_ratio,mask_example=sliced_mask_token)
                             pred_image = siamese_model.module.unpatchify(pred)
                             pred_images.append(pred_image)
@@ -403,9 +403,8 @@ def evaluate_per_batch(temp_model, batch, total_time_len = 20, time_len = 1, sho
                         video_clips[-1] = pred_image
                     current_im = as_png(pred_image.permute(0,2,3,1)[0])
 
-    #                 print(f"finish siamese for frame {len(video_clips)-1}...")
 
-        #!  ----------------
+         #!  ----------------
                 
     return video_clips
 
@@ -415,14 +414,15 @@ n_values_ssim = []
 n_values_psnr = []
 
 pbar = tqdm(total=1000)
-b_i = 0
+b_i = 0     #* 生成了幾個video
 iteration = iter(test_loader_abs)
-skip_num = 0
+skip_num = 0    #* 從第幾個video開始生成
 cnt = 0
 while b_i < video_limit:    
 
     try:
         batch, index, inter_index = next(iteration)
+        #* 跳過skip_num 個video
         if cnt<skip_num:
             cnt+=1
             pbar.update(1)
@@ -443,8 +443,10 @@ while b_i < video_limit:
     for key in batch.keys():
         batch[key] = batch[key].cuda()
     
+    #* 每個video生成frame_limit 張圖片
     generate_video = evaluate_per_batch(model, batch, total_time_len = frame_limit, time_len = 1,siamese=True)
-        
+    
+    #* 保存生成的圖片
     for i in range(1, len(generate_video)):
         gt_img = np.array(as_png(batch["rgbs"][0, :, i, ...].permute(1,2,0)))
         forecast_img = np.array(as_png(generate_video[i][0].permute(1,2,0)))
@@ -453,7 +455,6 @@ while b_i < video_limit:
         cv2.imwrite(os.path.join(sub_dir, "gt_%02d.png" % i), gt_img[:, :, [2,1,0]])
 
     #* 計算生成的前5張與GT 的指標就好 (short term)
-
     for i in range(1, 6): 
         t_img = (batch["rgbs"][:, :, i, ...] + 1)/2
         p_img = (generate_video[i] + 1)/2
@@ -480,6 +481,7 @@ total_ssim = []
 total_psnr = []
 
 with open(os.path.join(target_save_path, "eval_3.txt"), 'w') as f:
+    #* 將所有video的計算結果寫入txt, 並計算平均結果
     for i in range(len(n_values_percsim)):
 
         f.write("#%d, percsim: %.04f, ssim: %.02f, psnr: %.02f" % (i, np.mean(n_values_percsim[i]), 

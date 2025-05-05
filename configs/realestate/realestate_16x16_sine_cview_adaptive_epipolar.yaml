@@ -3,7 +3,7 @@ model:
   target: src.models.transformers.geogpt_adaptive.GeoTransformer
   params:
     use_depth: False # depth is not provided to transformer but only used to rescale t
-    epipolar: "bidirectional" #* forward, bidirectional
+    epipolar: "bidirectional" #* forward, backward or bidirectional
     use_scheduler: True
     scheduler_config:
       target: src.lr_scheduler.LambdaWarmUpCosineScheduler
@@ -25,7 +25,7 @@ model:
         n_layer: 32
         n_head: 16
         n_embd: 1024
-        epipolar: "bidirectional" #* forward, bidirectional
+        epipolar: "bidirectional" #* forward, backward or bidirectional
         do_blur: False
         mask_cam: True
 

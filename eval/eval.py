@@ -14,13 +14,13 @@ from src.metric.metrics import perceptual_sim, psnr, ssim_metric
 from src.metric.pretrained_networks import PNet
 
 exp_name = "exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error"
-exp_setting = "evaluate_frame_6_video_252_ckpt_100000_mask0.900000"
+exp_setting = "evaluate_frame_6_video_253_ckpt_100000_mask0.950000"
 target_folder = f"experiments/realestate/{exp_name}/{exp_setting}"
-folder_name = "before2"
+folder_name = "1image_alternately_siamese"
 
 parser = argparse.ArgumentParser(description="training codes")
 parser.add_argument('--gpu', default= '5', type=str)
-parser.add_argument("--seed", type=int, default=2333, help="")
+parser.add_argument("--seed", type=int, default=2334, help="")
 args = parser.parse_args()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu

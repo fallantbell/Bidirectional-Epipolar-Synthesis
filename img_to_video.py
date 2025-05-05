@@ -64,7 +64,7 @@ if __name__ == '__main__':
         'exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error',
         # 'exp_base_error'
                   ]
-    video_num = "036-mix10-mask0.9"
+    video_num = "057-mix10-mask0.9"
 
     for type in model_type:
         write_video(type,video_num)

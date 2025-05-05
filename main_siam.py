@@ -10,21 +10,16 @@ import torch.optim as optim
 from torchvision.transforms import transforms
 from torch.utils.data import DataLoader, Dataset
 from torchvision.io import read_video
-# from torchvision.transforms import v2
 import torch
 from torch.utils.data import DataLoader, Dataset
 
 import torch.nn.functional as F
 from functools import partial
 import gc
-# import av
 import joblib
 
-# from DataLoading import *
 from SiamMae import *
-# from LabelPropagation import *
 from train_siam import *
-# from utils import *
 
 root_path = '...'
 

@@ -101,14 +101,10 @@ class GeoTransformer(nn.Module):
         self.do_cross = do_cross
         self.two_cond = two_cond
 
-        # if do_cross:
-        #     self.encoder = MAE_Encoder()
-
         if ckpt_path is not None:
             self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
         
     def init_from_ckpt(self, path, ignore_keys=list()):
-        # sd = torch.load(path, map_location="cpu")["state_dict"]
         sd = torch.load(path, map_location="cpu")
         for k in sd.keys():
             for ik in ignore_keys:
@@ -200,17 +196,10 @@ class GeoTransformer(nn.Module):
         for t in range(0, time_len-1): 
             _, c_indices = self.encode_to_c(batch["rgbs"][:, :, t, ...]) #* VQVAE encode image 成字典index
             #* 將 字典indices encode 成 1024 channel
-            #* 字典index 有16384個, 每個不同index 都會mapping 到不同的 1024 dimension
             #* (B,256) -> (B,256,1024)
             c_emb = self.transformer.tok_emb(c_indices) 
             conditions.append(c_emb)
 
-            #* c_indice shape = (B,256), 字典index
-            #* c_emb shape = (B,256,1024), 字典index 的embedding
-            # print(f"t = {t}")
-            # print(f"c_indice shape = {c_indices.shape}")
-            # print(f"c_emb shape = {c_emb.shape}")
-            
             if t == 0:
                 example["R_rel"] = batch["R_01"]
                 example["t_rel"] = batch["t_01"]
@@ -219,19 +208,22 @@ class GeoTransformer(nn.Module):
                 #* (B,30,1) -> nn.linear -> (B,30,1024)
                 #* (B,30,1024)
                 embeddings_warp = self.encode_to_e(example) 
-                #* 單純將camera 參數concat, (B,30)
-                p.append(self.encode_to_p(example))
                 conditions.append(embeddings_warp)
+                
+                # p 不重要,沒用上
+                p.append(self.encode_to_p(example))
                 
             if t == 1:
                 example["R_rel"] = batch["R_02"]
                 example["t_rel"] = batch["t_02"]
                 embeddings_warp = self.encode_to_e(example)
-                p.append(self.encode_to_p(example))
                 conditions.append(embeddings_warp)
 
+                # p 不重要,沒用上
+                p.append(self.encode_to_p(example))
+                
             if t > 0:
-                gts.append(c_indices) #* for loss, 要將gt機率與 predict結果做cross entropy loss
+                gts.append(c_indices) #* for loss, 要將gt與 predict結果做cross entropy loss
         
         _, c_indices = self.encode_to_c(batch["rgbs"][:, :, time_len-1, ...]) # final frame
         c_emb = self.transformer.tok_emb(c_indices)
@@ -241,25 +233,28 @@ class GeoTransformer(nn.Module):
         
         #* condition = [rgb1_emb,cam01_emb,rgb2_emb,cam12_emb,rgb3_emb]
         conditions = torch.cat(conditions, 1) # B, L, 1024
-        prototype = conditions[:, 0:286, :] #* 286 = 256 (16x16 rgb emb) + 30 (camera emb), 應該代表已知條件?
+        prototype = conditions[:, 0:286, :] #* 286 = 256 (16x16 rgb emb) + 30 (camera emb)
         z_emb = conditions[:, 286::, :]
         
-        # p3 
+        # p3 不重要,沒用上
         example["R_rel"] = batch["R_12"]
         example["t_rel"] = batch["t_12"]
         p.append(self.encode_to_p(example))
         
+        #* 進行預測
         #* logits shape = (B,827,16384)
         logits, _ = self.transformer.iter_forward(prototype, z_emb, p = p,k=batch["K_ori"],w2c=batch['w2c_seq'])
+        
         #* logits shape = (B,542,16384)
         #* 542 = 256+30+256
         logits = logits[:, prototype.shape[1]-1:] 
         
         for t in range(0, time_len-2):
-            forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二個rgb 字典機率
+            forecasts.append(logits[:, 286*t:286*t+256, :]) #* 預測的第二張圖片
         
-        forecasts.append(logits[:, -256::, :]) # final frame    #* 預測的第三個rgb 字典機率
+        forecasts.append(logits[:, -256::, :]) #* 預測的第三張圖片
         
+        #* 計算loss
         loss, log_dict = self.compute_loss(torch.cat(forecasts, 0), torch.cat(gts, 0), split="train")
         
         return forecasts, gts, loss, log_dict
@@ -320,33 +315,27 @@ class GeoTransformer(nn.Module):
 
         assert not self.transformer.training
 
-        #* 計算epipolar map [forward,backward,bidirectional,token_change]
-        #! 將epipolar 的計算拿出來做，不需要每個token 都算一次
+        #* 計算epipolar map [forward,backward,bidirectional]
+        #* 將epipolar 的計算拿出來做，不需要每個token 都算一次
         batch = x.shape[0]
         forward_epipolar_map = None
         backward_epipolar_map = None
         if self.epipolar!=None:
             if self.epipolar == 'forward' or self.epipolar == 'bidirectional':
-                
                 w2c_0 = w2c[:,0]
                 w2c_1 = w2c[:,1]
-                # w2c_2 = w2c[:,2]
+                w2c_2 = w2c[:,2]
                 f01 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_1)
-                f02 = f01.clone()
-                f12 = f01.clone()
-                # f02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_2)
-                # f12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_2)
+                f02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_0,w2c_2)
+                f12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_2)
                 forward_epipolar_map = [f01,f02,f12]
             if self.epipolar == 'backward' or self.epipolar == 'bidirectional':
-                # forward_epipolar_map = get_epipolar_tensor(1,h,h,k2.clone(),prev_w2c,now_w2c)
                 w2c_0 = w2c[:,0]
                 w2c_1 = w2c[:,1]
-                # w2c_2 = w2c[:,2]
+                w2c_2 = w2c[:,2]
                 b01 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_1,w2c_0)
-                b02 = b01.clone()
-                b12 = b01.clone()
-                # b02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_0)
-                # b12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_1)
+                b02 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_0)
+                b12 = self.transformer.get_epipolar_tensor(batch,16,16,k_ori.clone(),w2c_2,w2c_1)
                 backward_epipolar_map = [b01,b02,b12]
         
         x_second = x.clone()

@@ -339,41 +339,10 @@ class SiameseAutoencoderViT(nn.Module):
         len_keep = int(L * (1 - mask_ratio))
 
         noise = torch.rand(N, L, device=x.device)
-        # masked_token = torch.zeros((32, 32), device=x.device)
-        # for i in range(32):
-        #   for j in range(32):
-        #     masked_token[i][j] = noise[0,(i//2)*64+(j//2)*2]
-        # noise = rearrange(masked_token,'h w -> (h w)')
-        # noise = noise.unsqueeze(0)
 
+        #* 若有指定的mask token, 則使用mask_example 取代random noise
         if mask_example!=None:
           noise = mask_example
-        
-        #! test 
-        # sorted_indices = torch.argsort(mask_example.squeeze()).cpu()
-        # small_index = sorted_indices[:int(1024*0.05)]
-        # idx_im = np.ones((32, 32))
-        # for j in range(len(small_index)):
-        #     sm_idx = small_index[j]
-        #     idx_im[sm_idx//32,sm_idx%32] = 0
-        
-        # recon_token = cv2.resize(idx_im, (256, 256), interpolation=cv2.INTER_NEAREST)
-        # plt.imshow(recon_token, cmap="gray")
-        # plt.axis("off")
-        # plt.savefig(f'bi_attn_test/exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error/100000/mask_exmaple.png')
-
-        # sorted_indices = torch.argsort(noise.squeeze()).cpu()
-        # small_index = sorted_indices[:int(1024*0.2)]
-        # idx_im = np.ones((32, 32))
-        # for j in range(len(small_index)):
-        #     sm_idx = small_index[j]
-        #     idx_im[sm_idx//32,sm_idx%32] = 0
-        
-        # recon_token = cv2.resize(idx_im, (256, 256), interpolation=cv2.INTER_NEAREST)
-        # plt.imshow(recon_token, cmap="gray")
-        # plt.axis("off")
-        # plt.savefig(f'bi_attn_test/exp_fixed_bi_epipolar_maskcam_sepsoft-4_2gpu_error/100000/noise.png')
-        # sys.exit()
 
         ids_shuffle = torch.argsort(noise, dim=1)
         ids_restore = torch.argsort(ids_shuffle, dim=1)
@@ -404,6 +373,7 @@ class SiameseAutoencoderViT(nn.Module):
               mask = torch.vstack([mask1, mask2])
               ids_restore = torch.vstack([ids_restore1, ids_restore2])
             else:
+                  #* 對future img 做masking
               x, mask, ids_restore = self.random_masking(x, mask_ratio,mask_example=mask_example)
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
@@ -472,7 +442,9 @@ class SiameseAutoencoderViT(nn.Module):
           latent_1, mask_1, _ = self.forward_encoder(imgs[:, 0].float(), mask_ratio=0)
           latent_2, mask_2, ids_restore_2 = self.forward_encoder(imgs[:, 1].float(), mask_ratio=mask_ratio)
         else:
+          #* past img encode    
           latent_1 = self.forward_encoder(imgs[:, 0].float(), mask_ratio=0)
+          #* future img encode
           latent_2, mask_2, ids_restore_2 = self.forward_encoder(imgs[:, 1].float(), mask_ratio=mask_ratio,mask_example=mask_example)
 
         if joint_decoder:
@@ -480,8 +452,6 @@ class SiameseAutoencoderViT(nn.Module):
           mask_2 = torch.vstack([mask_1, mask_2])
         pred = self.forward_decoder(latent_1, latent_2, ids_restore_2)
         loss = self.forward_loss(imgs, pred, mask_2)
-        # print(f"img0 shape = {imgs[:, 0].shape}")
-        # print(f"imgs shape = {imgs.shape}")
         return loss, pred
 
 
