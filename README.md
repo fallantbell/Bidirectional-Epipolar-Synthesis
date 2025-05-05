@@ -28,7 +28,8 @@ main.py \
 --batch-size 2 \
 --ckpt-iter 50000 \
 --max_iter 400001 --visual-iter 2501 \
---dataset realestate --name exp_bidirectional_epipolar \
+--dataset realestate --data-path ../dataset \
+--name exp_bidirectional_epipolar \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar.yaml \
 --gpu 0,1,2,3
 ```
@@ -45,7 +46,13 @@ Generate and evaluate the synthesis results:
 python ./evaluation/evaluate_realestate.py \
 --len 6 --video_limit 250 \
 --base realestate_16x16_sine_cview_adaptive_epipolar \
---ckpt 400000 \
+--data-path ../dataset \
+--ckpt 400000 --siamese_ckpt Siamese_folder/mask09_fulldata.pt \
 --exp exp_bidirectional_epipolar --gpu 0 \
 --type bi --mask_ratio 0.9
 ```
+
+## Acknowledgement
+### Code
+- The implementation is based on [LoR](https://github.com/xrenaa/Look-Outside-Room)
+- The implementation of SiamMAE is based on [SiamMAE](https://github.com/Jeremylin0904/SiamMAE_DeepLearning_final)

@@ -73,7 +73,7 @@ if __name__ == '__main__':
                         help="experiments name")
     parser.add_argument("--base", type=str, default="./configs/realestate/realestate_16x16_sine_cview_adaptive.yaml",
                         help="experiments name")
-    parser.add_argument("--data-path", type=str, default="/latent_opt_test/RealEstate10K_Downloader/",
+    parser.add_argument("--data-path", type=str, default="../dataset",
                         help="data path")
     parser.add_argument("--batch-size", type=int, default=2, help="")
     parser.add_argument("--ckpt-iter", type=int, default=50000,
@@ -141,9 +141,9 @@ if __name__ == '__main__':
     # load data
     if args.dataset == "realestate":
         from src.data.realestate.re10k_dataset import Re10k_dataset
-        sparse_dir = "%s/sparse/" % args.data_path
-        image_dir = "%s/dataset/" % args.data_path
-        dataset = Re10k_dataset(data_root="../dataset",mode="train")
+        # sparse_dir = "%s/sparse/" % args.data_path
+        # image_dir = "%s/dataset/" % args.data_path
+        dataset = Re10k_dataset(data_root=f"{args.data_path}",mode="train")
     elif args.dataset == "mp3d":
         from src.data.mp3d.mp3d_cview import VideoDataset
         dataset = VideoDataset(root_path = args.data_path, length = time_len, gap = args.gap)

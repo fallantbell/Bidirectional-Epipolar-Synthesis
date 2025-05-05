@@ -115,8 +115,8 @@ class Re10k_dataset(Dataset):
 
         self.mode = mode
 
+        #* change to your own root
         self.inform_root = '{}/RealEstate10K/{}'.format(data_root, mode)
-        # self.image_root = '{}/realestate/{}'.format(data_root, mode)
         self.image_root = '{}/realestate_4fps/{}'.format(data_root, mode)
 
         if self.mode == "finetune":

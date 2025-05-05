@@ -38,7 +38,9 @@ parser.add_argument("--exp", type=str, default="exp_1_error",
                     help="experiments name")
 parser.add_argument("--ckpt", type=str, default="last",
                     help="checkpoint name")
-parser.add_argument("--data-path", type=str, default="/latent_opt_test/RealEstate10K_Downloader/",
+parser.add_argument("--siamese_ckpt", type=str, default="Siamese_folder/mask095_fulldata.pt",
+                    help="siamese checkpoint")
+parser.add_argument("--data-path", type=str, default="../dataset",
                     help="data path")
 parser.add_argument("--len", type=int, default=4, help="len of prediction")
 parser.add_argument('--gpu', default= '0', type=str)
@@ -115,18 +117,15 @@ model.load_state_dict(torch.load(cpt_path))
 model.eval()
 
 #* load siamese model
-siamese_model_path = 'Siamese_folder/mask095_fulldata.pt'
+siamese_model_path = f'{args.siamese_ckpt}'
 siamese_model = sim_mae_vit_small_patch8_dec512d8b()
 siamese_model = nn.DataParallel(siamese_model).to("cuda")
 siamese_model.load_state_dict(torch.load(siamese_model_path))
 siamese_model.eval()
 
 # load dataloader
-# from src.data.realestate.realestate_sample import VideoDataset
 from src.data.realestate.re10k_dataset import Re10k_dataset
-sparse_dir = "%s/sparse/" % args.data_path
-image_dir = "%s/dataset/" % args.data_path
-dataset_abs = Re10k_dataset(data_root="../dataset",mode="test",infer_len=args.len)
+dataset_abs = Re10k_dataset(data_root=f"{args.data_path}",mode="test",infer_len=args.len)
 
 test_loader_abs = torch.utils.data.DataLoader(
         dataset_abs,
