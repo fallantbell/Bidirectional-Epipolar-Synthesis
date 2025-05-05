@@ -1,5 +1,7 @@
 ## Introduction
-![image](https://github.com/fallantbell/Bidirectional-Epipolar-Synthesis/blob/master/assets/teaser.pdf)
+
+![image](https://github.com/fallantbell/Bidirectional-Epipolar-Synthesis/blob/master/assets/teaser.pdf)  
+
 Novel view synthesis from a single image poses a significant challenge, which aims to gen-
 erate novel scene views given a reference image and a sequence of camera poses. The primary
 difficulty lies in effectively leveraging a generative model to achieve high-quality image gener-
@@ -14,7 +16,8 @@ ule that prevents creating novel content in regions where the newly generated im
 with existing ones. Extensive experimental results demonstrate that our method outperforms
 previous approaches to novel view synthesis, achieving superior performance in both image
 quality and consistency
-![image](https://github.com/fallantbell/Bidirectional-Epipolar-Synthesis/blob/master/assets/overview.pdf)
+
+![image](https://github.com/fallantbell/Bidirectional-Epipolar-Synthesis/blob/master/assets/overview.pdf)  
 
 ## Installation
 - Clone the repository:
