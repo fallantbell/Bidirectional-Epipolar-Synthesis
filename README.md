@@ -1,3 +1,20 @@
+## Introduction
+
+Novel view synthesis from a single image poses a significant challenge, which aims to gen-
+erate novel scene views given a reference image and a sequence of camera poses. The primary
+difficulty lies in effectively leveraging a generative model to achieve high-quality image gener-
+ation while simultaneously ensuring consistency and faithfulness across synthesized views. In
+this paper, we propose a novel approach to address the consistency and faithfulness issues in
+view synthesis. Specifically, we develop a new attention layer, termed bidirectional epipolar at-
+tention, which utilizes a pair of complementary epipolar lines to guide the associations between
+features from different viewpoints. Each bidirectional epipolar layer calculates forward and
+backward epipolar lines, enabling geometrically constrained attention that improves cross-view
+consistency. To ensure faithful synthesis, we introduce an epipolar-aware reconstruction mod-
+ule that prevents creating novel content in regions where the newly generated image overlaps
+with existing ones. Extensive experimental results demonstrate that our method outperforms
+previous approaches to novel view synthesis, achieving superior performance in both image
+quality and consistency
+
 ## Installation
 - Clone the repository:
 ```
