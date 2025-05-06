@@ -51,6 +51,12 @@ main.py \
 --name exp_bidirectional_epipolar \
 --base ./configs/realestate/realestate_16x16_sine_cview_adaptive_epipolar.yaml \
 --gpu 0,1,2,3
+
+# ckpt-iter means how many iterations to save checkpoints
+# max_iter means the total training iterations
+# visual-iter means how many iterations to save visualization
+# name means your experiment name
+# base means the configuration of the model paramenters
 ```
 
 2. Train Siamese mask autoencoder:
@@ -68,7 +74,12 @@ python ./evaluation/evaluate_realestate.py \
 --data-path ../dataset \
 --ckpt 400000 --siamese_ckpt Siamese_folder/mask09_fulldata.pt \
 --exp exp_bidirectional_epipolar --gpu 0 \
---type bi --mask_ratio 0.9
+--mask_ratio 0.9
+
+# ckpt means which checkpoint will be chosen
+# siamese_ckpt means which siamese checkpoints will be chosen
+# exp means the experiments you want to evaluate
+# mask_ratio means the ratio of siamese masking 
 ```
 
 ## Acknowledgement
